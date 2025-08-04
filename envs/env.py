@@ -4,7 +4,7 @@ import sys
 import time
 from typing import Tuple
 
-import gym
+import gymnasium as gym
 from ray.rllib.utils.typing import MultiAgentDict
 
 if 'SUMO_HOME' in os.environ:
@@ -17,6 +17,8 @@ import traci
 from ray.rllib.env import MultiAgentEnv
 
 from utils.file_processing import ensure_dir
+
+import numpy as np
 
 RETRIES_ON_ERROR = 10  # Number of retries on restarting SUMO before giving up
 LIBSUMO = 'LIBSUMO_AS_TRACI' in os.environ
@@ -48,6 +50,8 @@ class BasicEnv(gym.Env):
 
         self.sim_step = sumo_config.getfloat('sim_step', fallback=1)
         self.sumo_gui = sumo_config.getboolean('sumo-gui', fallback=False)
+        if self.sumo_gui:
+            os.environ["LIBGL_ALWAYS_SOFTWARE"] = "1"
         self.seed = sumo_config.get('seed', fallback='random')
         self.output_path = sumo_config.get('output_path', fallback=None)
         self.num_output = sumo_config.getint('num_output', fallback=10)
@@ -125,6 +129,7 @@ class BasicEnv(gym.Env):
             traci.close()
             self.sumo = None
 
+        print("in _start_sumo")
         for _ in range(RETRIES_ON_ERROR):
             try:
                 sumo_binary = "sumo-gui" if self.sumo_gui else "sumo"
@@ -168,7 +173,8 @@ class BasicEnv(gym.Env):
 
                 # wait a small period of time for the subprocess to activate before trying to connect with Traci
                 time.sleep(1)
-
+                
+                print(f"trying to start sumo with traci {sumo_cmd}")
                 if LIBSUMO:
                     traci.start(sumo_cmd, numRetries=100)
                 else:
@@ -176,6 +182,7 @@ class BasicEnv(gym.Env):
                 self.num_episode += 1
                 self.sumo = traci
                 self.scenario.sumo = traci
+                print("made it to the end of _start_sumo")
                 break
             except Exception as e:
                 logger.exception(f"Error during starting a SUMO instance: {e}")
@@ -241,7 +248,7 @@ class BasicEnv(gym.Env):
         dones = self._compute_dones()
         info = self._get_info()
 
-        return obs, reward, dones, info
+        return obs, reward, dones, np.zeros_like(dones, dtype=bool), info # EMRAN don't know if self._truncateds is important (_, _, _, self._truncateds, _)
 
     def render(self, mode="human"):
         pass

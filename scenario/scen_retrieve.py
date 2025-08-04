@@ -1,4 +1,5 @@
 import time
+import os.path
 from lxml import etree
 
 import sumolib
@@ -8,10 +9,10 @@ from utils.file_processing import make_xml, print_xml
 class SumoScenario:
     def __init__(self, config):
         self.sumo = None
-        self.net_file_path = config.get('net')
-        self.rou_file_path = config.get('rou')
-        self.cfg_file_path = config.get('cfg')
-        self.vtype_file_path = config.get('vtype')
+        self.net_file_path = os.path.abspath(config.get('net'))
+        self.rou_file_path = os.path.abspath(config.get('rou'))
+        self.cfg_file_path = os.path.abspath(config.get('cfg'))
+        self.vtype_file_path = os.path.abspath(config.get('vtype'))
         self.phases_all_tls = {}
         self.lanes = []
         self.tls = []

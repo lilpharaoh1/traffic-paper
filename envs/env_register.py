@@ -2,9 +2,9 @@
 create and return an env instance
 """
 
-import gym
-from gym.envs.registration import register
-
+import gymnasium as gym
+from gymnasium.envs import register
+from envs.env_cotv import CoTVEnv
 
 def register_env_gym(env, scenario, sumo_config, control_config, train_config, version=0):
     """
@@ -31,15 +31,14 @@ def register_env_gym(env, scenario, sumo_config, control_config, train_config, v
     # exp_name = params["exp_name"]
     env_name = env.__name__
 
-    # deal with multiple environments being created under the same name
-    all_envs = gym.envs.registry.all()
-    env_ids = [each_env.id for each_env in all_envs]
+    # deal with multiple environments being created under the same name 
+    all_envs = gym.envs.registry
+    env_ids = [each_env for each_env in all_envs.keys()]
     while "{}-v{}".format(env_name, version) in env_ids:
         version += 1
-    env_name = "{}-v{}".format(env_name, version)
+    env_name = "{}-v{}".format(env_name, version) 
 
     def create_env(*_):
-
         parameter = {
             "scenario": scenario,
             "sumo_config": sumo_config,
@@ -52,8 +51,10 @@ def register_env_gym(env, scenario, sumo_config, control_config, train_config, v
             entry_point=env.__module__ + ':' + env.__name__,
             order_enforce=False,  # ERROR: rollout_worker.py line640+ not a subclass
             kwargs=parameter)
-
         return gym.envs.make(env_name)
+
+    def create_env(*_):
+        return CoTVEnv(scenario, sumo_config, control_config, train_config)
 
     return create_env, env_name
 

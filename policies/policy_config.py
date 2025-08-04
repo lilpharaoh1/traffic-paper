@@ -2,20 +2,36 @@ from ray.rllib.models import ModelCatalog
 from policies.models.CentralizedCriticModel import CentralizedCriticModel
 import ast
 
+from ray.tune.registry import register_trainable
+from policies.drama.drama import Drama, DramaConfig
+from ray.rllib.algorithms.dreamerv3 import DreamerV3Config
+from ray.rllib.algorithms.ppo import PPOConfig
+from ray.rllib.algorithms.maddpg import MADDPGConfig
+from ray.rllib.algorithms.algorithm import Algorithm
+
+def drama_config(train_configs, env_name, model_configs):
+    return {
+        "env": env_name,
+        "log_level": train_configs.get('log_level'),
+        "batch_size_B": 16, 
+        "batch_length_T": 64, 
+        "gamma": 0.999,
+        "model_size": "D",
+        "training_ratio": 1024,
+    }
+
+def dreamerv3_config(train_configs, env_name, model_configs):
+    return {
+        "env": env_name,
+        "log_level": train_configs.get('log_level'),
+        "batch_size_B": 16, 
+        "batch_length_T": 64, 
+        "gamma": 0.999,
+        "model_size": "XS",
+        "training_ratio": 1024,
+    }
 
 def ppo_config(train_configs, env_name, model_configs):
-
-    model = {}
-    for key in model_configs.keys():
-        if key == 'name':
-            model.update({'custom_model': model_configs.get(key)})
-            ModelCatalog.register_custom_model(
-                model_configs.get('name'),
-                CentralizedCriticModel,
-            )
-        else:
-            model.update({key: ast.literal_eval(model_configs.get(key))})
-
     return {
         "env": env_name,
         "log_level": train_configs.get('log_level'),
@@ -35,7 +51,6 @@ def ppo_config(train_configs, env_name, model_configs):
 
 
 def maddpg_config(train_configs, env_name, model_configs):
-
     return {
         "env": env_name,
         "log_level": train_configs.get('log_level'),
@@ -44,22 +59,37 @@ def maddpg_config(train_configs, env_name, model_configs):
         "horizon": train_configs.getint('horizon'),
         "rollout_fragment_length": 720,
         "gamma": 0.95,  # discount rate
-
     }
 
-
 class PolicyConfig:
-
     def __init__(self, env_name, alg_configs, train_configs, model_configs=None):
         self.env_name = env_name
-        self.name = alg_configs.get('alg_name')
-        self.policy = self.find_policy(train_configs, model_configs)
+        self.name = alg_configs.get('alg_name')  # e.g., 'DreamerV3'
+        self.config_to_ray = self.find_policy_config(train_configs, model_configs)
+        self.algo_config = self.find_algo_config()
 
-    def find_policy(self, train_configs, model_configs):
-        if self.name == 'PPO':
+    def find_policy_config(self, train_configs, model_configs):
+        if self.name == "Drama":
+            return drama_config(train_configs, self.env_name, model_configs)
+        elif self.name == 'DreamerV3':
+            return dreamerv3_config(train_configs, self.env_name, model_configs)
+        elif self.name == 'PPO':
             return ppo_config(train_configs, self.env_name, model_configs)
-        if self.name == 'contrib/MADDPG':
+        elif self.name == 'MADDPG':
             return maddpg_config(train_configs, self.env_name, model_configs)
+        else:
+            raise ValueError(f"Unknown algorithm name: {self.name}")
 
-
+    def find_algo_config(self):
+        if self.name == "Drama":
+            register_trainable("Drama", Drama)
+            return DramaConfig()
+        elif self.name == "DreamerV3":
+            return DreamerV3Config()
+        elif self.name == "PPO":
+            return PPOConfig()
+        elif self.name == "MADDPG":
+            return MADDPGConfig()
+        else:
+            return None  # fallback to Algorithm.from_config
 
