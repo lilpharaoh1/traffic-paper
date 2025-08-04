@@ -1,9 +1,9 @@
-from envs.env import BasicMultiEnv
+from envs.env import BasicEnv, BasicMultiEnv
 import numpy as np
-from gym.spaces import Box, Discrete
+from gymnasium.spaces import Box, Discrete, Dict, MultiDiscrete, Tuple
 
 
-class CoTVEnv(BasicMultiEnv):
+class CoTVEnv(BasicEnv):
 
     def __init__(self, scenario, sumo_config, control_config, train_config):
         super().__init__(scenario, sumo_config, control_config, train_config)
@@ -28,6 +28,30 @@ class CoTVEnv(BasicMultiEnv):
         self.observed_ids = []
         self.observation_info = None
 
+        self._action_space = Box(low=0.0, high=1.0, shape=(len(self.mapping_inc),))
+        # self._action_space = MultiDiscrete([3] * len(self.mapping_inc))
+
+        self._observation_space = Box(low=0., high=1, shape=(len(self.mapping_inc) * (self.num_int_lane_max + self.num_out_lane_max + 1),))
+        # self._observation_space = Tuple([Box(low=0., high=1, shape=(self.num_int_lane_max + self.num_out_lane_max + 1,)) for _ in range(len(self.mapping_inc))])
+        # print(len(self._observation_space.shape))
+        # self._observation_space = Dict({
+        #     tl_id: Box(
+        #         low=0., 
+        #         high=1, 
+        #         shape=(4 * self.num_int_lane_max * self.num_observed
+        #                                   + self.num_int_lane_max + self.num_out_lane_max + 1,)
+        #     ) 
+        #     for tl_id in self.mapping_inc.keys()
+        #     })
+
+    @property
+    def action_space(self,):
+        return self._action_space
+
+    @property
+    def observation_space(self,):
+        return self._observation_space
+
     @property
     def action_space_tl(self):
         return Discrete(2)
@@ -47,7 +71,7 @@ class CoTVEnv(BasicMultiEnv):
         return Box(low=-5, high=5, shape=(7,))
 
     def _get_state(self):
-        obs = {}
+        obs = []
 
         if not self.max_speed:
             self.max_speed = self.scenario.max_speed()
@@ -75,53 +99,6 @@ class CoTVEnv(BasicMultiEnv):
                 self.veh_list_lane[each].update({veh: self.update_vehicles(veh, each, accel_norm)})
             veh_num_per_lane.update({each: len(now_veh_id_list) / max_num_veh_c})
 
-        # Observed vehicle information for traffic light controller
-        speeds = []
-        accels = []
-        dist_to_junc = []
-        lane_index = []
-        all_observed_ids = []
-        # traffic light information
-        for tl_id, lanes in self.mapping_inc.items():
-            local_speeds = []
-            local_accels = []
-            local_dist_to_junc = []
-            local_lane_index = []
-            for lane in lanes:
-                # sort to select the closest vehicle
-                veh_id_sort = {}
-                for veh in self.veh_list_lane[lane].keys():
-                    veh_id_sort.update({self.veh_list_lane[lane][veh][2]: veh})
-                num_observed = min(self.num_observed, len(self.veh_list_lane[lane]))
-                observed_ids = [veh_id_sort[sorted(veh_id_sort.keys())[i]] for i in range(num_observed)]
-                all_observed_ids.extend(observed_ids)
-
-                local_speeds.extend([self.veh_list_lane[lane][veh_id][0] for veh_id in observed_ids])
-                local_accels.extend([self.veh_list_lane[lane][veh_id][1] for veh_id in observed_ids])
-                local_dist_to_junc.extend([self.veh_list_lane[lane][veh_id][2] for veh_id in observed_ids])
-                local_lane_index.extend([self.veh_list_lane[lane][veh_id][3] for veh_id in observed_ids])
-
-                if len(observed_ids) < self.num_observed:
-                    diff = self.num_observed - len(observed_ids)
-                    local_speeds.extend([1] * diff)
-                    local_accels.extend([0] * diff)
-                    local_dist_to_junc.extend([1] * diff)
-                    local_lane_index.extend([0] * diff)
-
-            # not 4-leg intersection
-            if len(lanes) < self.num_int_lane_max:
-                diff = self.num_int_lane_max - len(lanes)
-                local_speeds.extend([1] * diff * self.num_observed)
-                local_accels.extend([0] * diff * self.num_observed)
-                local_dist_to_junc.extend([1] * diff * self.num_observed)
-                local_lane_index.extend([0] * diff * self.num_observed)
-
-            speeds.append(local_speeds)
-            accels.append(local_accels)
-            dist_to_junc.append(local_dist_to_junc)
-            lane_index.append(local_lane_index)
-        self.observed_ids = all_observed_ids
-
         # add observation of TL
         for tl_id in self.mapping_inc.keys():
             tl_id_num = list(self.mapping_inc.keys()).index(tl_id)
@@ -143,89 +120,45 @@ class CoTVEnv(BasicMultiEnv):
             state_index = states.index(now_state)
 
             observation = np.array([round(i, 8) for i in np.concatenate(
-                [speeds[tl_id_num], accels[tl_id_num], dist_to_junc[tl_id_num], lane_index[tl_id_num],
-                 veh_num_per_in, veh_num_per_out, [state_index / len(states)]]
+                [veh_num_per_in, veh_num_per_out, [state_index / len(states)]]
             )])
-            obs.update({tl_id: observation})
 
-        # add observation of CAV
-        for cav_id in self.observed_ids:
-            this_speed = self.sumo.vehicle.getSpeed(cav_id)
-            this_accel = self.sumo.vehicle.getAcceleration(cav_id)
-            this_accel = (this_accel, -15)[abs(this_accel) >= 15]
-
-            if self.sumo.vehicle.getNextTLS(cav_id):
-                incoming_tl = self.sumo.vehicle.getNextTLS(cav_id)[0][0]  # [(tlsID, tlsIndex, distance, state), ...]
-                this_dist_to_junc = self.sumo.vehicle.getNextTLS(cav_id)[0][2]
-            else:  # TODO: check whether this situation exists
-                incoming_tl = None
-                this_dist_to_junc = self.max_length
-
-            if incoming_tl:
-                states = self.states_tl[incoming_tl]
-                now_state = self.sumo.trafficlight.getRedYellowGreenState(incoming_tl)
-                state_index = states.index(now_state)
-                state_norm = state_index / len(states)
-            else:
-                state_norm = 0
-
-            if self.sumo.vehicle.getLeader(cav_id):
-                lead_veh = self.sumo.vehicle.getLeader(cav_id)[0]
-                lead_speed = self.sumo.vehicle.getSpeed(lead_veh)
-                lead_gap = self.sumo.vehicle.getLeader(cav_id)[1]
-                lead_accel = self.sumo.vehicle.getAcceleration(lead_veh)
-                lead_accel = (lead_accel, -15)[abs(lead_accel) >= 15]
-            else:
-                lead_speed = self.max_speed + this_speed
-                lead_gap = self.max_length
-                lead_accel = 3
-
-            if lead_gap / self.max_length > 5:
-                lead_gap = 5 * self.max_length
-            elif lead_gap / self.max_length < -5:
-                lead_gap = -5 * self.max_length
-
-            obs.update({cav_id: np.array([
-                this_dist_to_junc / self.max_length, this_speed / self.max_speed,
-                this_accel / self.max_accel, (lead_speed - this_speed) / self.max_speed,
-                lead_gap / self.max_length, lead_accel / self.max_accel,
-                state_norm])})
+            # EMRAN changed from dict {tl_id:observation}
+            obs.extend(observation)            
 
         self.observation_info = obs
+
         return obs
 
     def _compute_reward(self):
-        reward = {}
-        for each_tl in self.states_tl.keys():
-            obs = list(self.observation_info[each_tl])
-            num_vehicle_start_index = 4 * self.num_int_lane_max * self.num_observed
-            in_traffic_sum = np.sum(obs[num_vehicle_start_index:num_vehicle_start_index + self.num_int_lane_max])
+        reward = 0.0
+        for each_tl in range(len(self.states_tl)):
+            obs = list(self.observation_info)
+            num_vehicle_start_index = each_tl * (self.num_int_lane_max + self.num_int_lane_max + 1)
+            in_traffic_sum = np.sum(obs[num_vehicle_start_index:
+                                        num_vehicle_start_index + self.num_int_lane_max])
             out_traffic_sum = np.sum(obs[num_vehicle_start_index + self.num_int_lane_max:
                                          num_vehicle_start_index + self.num_int_lane_max + self.num_out_lane_max])
-            reward.update({each_tl: -(in_traffic_sum - out_traffic_sum)})
-
-        for each_cav in self.observed_ids:
-            lane_id = self.sumo.vehicle.getLaneID(each_cav)
-            veh_ids = list(self.veh_list_lane[lane_id].keys())
-            reward.update({each_cav: - self.avg_speed_diff(veh_ids, lane_id)
-                                     - self.stable_acceleration_positive(veh_ids)})
+            reward += in_traffic_sum - out_traffic_sum # EMRAN not sure if this will work but sure look
 
         return reward
 
-    def _compute_dones(self):
+    def _compute_dones(self): # EMRAN changed to just output bool
         # termination conditions for the environment
         done = {}
         if self.step_count_in_episode >= self.sim_step * (self.horizon + self.warmup_steps):
-            done['__all__'] = True
+            # done['__all__'] = True
+            done = True
         else:
-            done['__all__'] = False
+            # done['__all__'] = False
+            done = False
 
-        arrived_vehs_this_timestep = []
-        for each in self.sumo.simulation.getArrivedIDList():
-            if each not in self.arrived_vehs:
-                arrived_vehs_this_timestep.append(each)
-                done.update({each: True})
-        self.arrived_vehs.extend(arrived_vehs_this_timestep)
+        # arrived_vehs_this_timestep = []
+        # for each in self.sumo.simulation.getArrivedIDList():
+        #     if each not in self.arrived_vehs:
+        #         arrived_vehs_this_timestep.append(each)
+        #         done.update({each: True})
+        # self.arrived_vehs.extend(arrived_vehs_this_timestep)
 
         return done
 
@@ -233,20 +166,13 @@ class CoTVEnv(BasicMultiEnv):
         return {}
 
     def _apply_actions(self, actions):
-        for agent_id, action in actions.items():
-            if agent_id not in self.states_tl.keys():
-                # perform acceleration actions for CAV agents
-                speed_now = self.sumo.vehicle.getSpeed(agent_id)
-                speed_next = max(speed_now + action * self.sim_step, 0)
-                self.sumo.vehicle.slowDown(agent_id, speed_next, self.sim_step)
-            else:
-                # perform signal switching for traffic light controller
-                switch = action > 0
-                states = self.states_tl[agent_id]
-                now_state = self.sumo.trafficlight.getRedYellowGreenState(agent_id)
-                state_index = states.index(now_state)
-                if switch and 'G' in now_state:
-                    self.sumo.trafficlight.setPhase(agent_id, state_index + 1)
+        for (agent_id, states), action in zip(self.states_tl.items(), actions):
+            # perform signal switching for traffic light controller
+            switch = action > 0 # EMRAN revise how actions are used
+            now_state = self.sumo.trafficlight.getRedYellowGreenState(agent_id)
+            state_index = states.index(now_state)
+            if switch and 'G' in now_state:
+                self.sumo.trafficlight.setPhase(agent_id, state_index + 1)
 
     # ---- Specific functions used in this env for traffic control ----
     def update_vehicles(self, veh_id, lane_id, accel_norm):
@@ -306,7 +232,7 @@ class CoTVEnv(BasicMultiEnv):
         self.observation_info = {}
         self.veh_list_lane = {i: {} for i in self.all_lane}
         self.observed_ids = []
-        return obs
+        return obs, {}
 
     def _additional_command(self):
         for veh_id in self.observed_ids:
