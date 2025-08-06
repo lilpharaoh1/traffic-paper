@@ -221,7 +221,7 @@ class CoTVEnv(BasicEnv):
 
     # ----
 
-    def reset(self):
+    def reset(self, **kwargs):
         """ Append some specific variables in this env to reset between episodes
 
         Returns
