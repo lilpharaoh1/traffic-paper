@@ -28,7 +28,7 @@ def layer_norm_ref(
     x1=None,
     weight1=None,
     bias1=None,
-    eps=1e-6,
+    epsilon=1e-6,
     dropout_p=0.0,
     rowscale=None,
     prenorm=False,
@@ -63,14 +63,14 @@ def layer_norm_ref(
         x = x + x1
     if residual is not None:
         x = (x + residual).to(x.dtype)
-    out = F.layer_norm(x.to(weight.dtype), x.shape[-1:], weight=weight, bias=bias, eps=eps).to(
+    out = F.layer_norm(x.to(weight.dtype), x.shape[-1:], weight=weight, bias=bias, epsilon=epsilon).to(
         dtype
     )
     if weight1 is None:
         return out if not prenorm else (out, x)
     else:
         out1 = F.layer_norm(
-            x.to(weight1.dtype), x.shape[-1:], weight=weight1, bias=bias1, eps=eps
+            x.to(weight1.dtype), x.shape[-1:], weight=weight1, bias=bias1, epsilon=epsilon
         ).to(dtype)
         return (out, out1) if not prenorm else (out, out1, x)
 
@@ -83,7 +83,7 @@ def rms_norm_ref(
     x1=None,
     weight1=None,
     bias1=None,
-    eps=1e-6,
+    epsilon=1e-6,
     dropout_p=0.0,
     rowscale=None,
     prenorm=False,
@@ -118,7 +118,7 @@ def rms_norm_ref(
         x = x + x1
     if residual is not None:
         x = (x + residual).to(x.dtype)
-    rstd = 1 / tf.math.sqrt((x.square()).mean(dim=-1, keepdim=True) + eps)
+    rstd = 1 / tf.math.sqrt((x.square()).mean(dim=-1, keepdim=True) + epsilon)
     out = ((x * rstd * weight) + bias if bias is not None else (x * rstd * weight)).to(dtype)
     if weight1 is None:
         return out if not prenorm else (out, x)
@@ -205,7 +205,7 @@ def _layer_norm_fwd_1pass_kernel(
     stride_y1_row,
     M,  # number of rows in X
     N,  # number of columns in X
-    eps,  # epsilon to avoid division by zero
+    epsilon,  # epsilon to avoid division by zero
     dropout_p,  # Dropout probability
     IS_RMS_NORM: tl.constexpr,
     BLOCK_N: tl.constexpr,
@@ -272,7 +272,7 @@ def _layer_norm_fwd_1pass_kernel(
     else:
         xbar = tl.where(cols < N, x, 0.0)
         var = tl.sum(xbar * xbar, axis=0) / N
-    rstd = 1 / tl.sqrt(var + eps)
+    rstd = 1 / tl.sqrt(var + epsilon)
     tl.store(Rstd + row, rstd)
     # Normalize and apply linear transformation
     mask = cols < N
@@ -296,7 +296,7 @@ def _layer_norm_fwd(
     x,
     weight,
     bias,
-    eps,
+    epsilon,
     residual=None,
     x1=None,
     weight1=None,
@@ -311,34 +311,34 @@ def _layer_norm_fwd(
     if residual is not None:
         residual_dtype = residual.dtype
     M, N = x.shape
-    assert x.stride(-1) == 1
+    assert x.shape[-1] == 1
     if residual is not None:
-        assert residual.stride(-1) == 1
+        assert residual.shape[-1] == 1
         assert residual.shape == (M, N)
     assert weight.shape == (N,)
-    assert weight.stride(-1) == 1
+    assert weight.shape[-1] == 1
     if bias is not None:
-        assert bias.stride(-1) == 1
+        assert bias.shape[-1] == 1
         assert bias.shape == (N,)
     if x1 is not None:
         assert x1.shape == x.shape
         assert rowscale is None
-        assert x1.stride(-1) == 1
+        assert x1.shape[-1] == 1
     if weight1 is not None:
         assert weight1.shape == (N,)
-        assert weight1.stride(-1) == 1
+        assert weight1.shape[-1] == 1
     if bias1 is not None:
         assert bias1.shape == (N,)
-        assert bias1.stride(-1) == 1
+        assert bias1.shape[-1] == 1
     if rowscale is not None:
         assert rowscale.is_contiguous()
         assert rowscale.shape == (M,)
     # allocate output
     y = tf.zeros_like(x, dtype=x.dtype if out_dtype is None else out_dtype)
-    assert y.stride(-1) == 1
+    assert y.shape[-1] == 1
     if weight1 is not None:
         y1 = tf.zeros_like(y)
-        assert y1.stride(-1) == 1
+        assert y1.shape[-1] == 1
     else:
         y1 = None
     if (
@@ -351,7 +351,7 @@ def _layer_norm_fwd(
         residual_out = tf.Variable(
             tf.zeros((M, N), dtype=residual_dtype if residual_dtype is not None else x.dtype)
             )
-        assert residual_out.stride(-1) == 1
+        assert residual_out.shape[-1] == 1
     else:
         residual_out = None
     mean = tf.Variable(tf.random.normal((M,), dtype=tf.float32)) if not is_rms_norm else None
@@ -395,7 +395,7 @@ def _layer_norm_fwd(
             y1.stride(0) if y1 is not None else 0,
             M,
             N,
-            eps,
+            epsilon,
             dropout_p,
             is_rms_norm,
             BLOCK_N,
@@ -466,7 +466,7 @@ def _layer_norm_bwd_kernel(
     stride_dres_in_row,
     M,  # number of rows in X
     N,  # number of columns in X
-    eps,  # epsilon to avoid division by zero
+    epsilon,  # epsilon to avoid division by zero
     dropout_p,
     rows_per_program,
     IS_RMS_NORM: tl.constexpr,
@@ -595,7 +595,7 @@ def _layer_norm_bwd(
     x,
     weight,
     bias,
-    eps,
+    epsilon,
     mean,
     rstd,
     dresidual=None,
@@ -703,7 +703,7 @@ def _layer_norm_bwd(
             dresidual_in.stride(0) if dresidual_in is not None else 0,
             M,
             N,
-            eps,
+            epsilon,
             dropout_p,
             rows_per_program,
             is_rms_norm,
@@ -729,42 +729,167 @@ def _layer_norm_bwd(
     )
 
 # EMRAN used to be class LayerNormFn(torch.autograd.Function)
-@tf.custom_gradient
-def layer_norm_custom(x, weight, bias, eps=1e-6, dropout_p=0.0, training=True):
-    x_shape_og = tf.shape(x)
-    x_flat = tf.reshape(x, [-1, x_shape_og[-1]])
+# @tf.custom_gradient
+# def layer_norm_custom(x, weight, bias, epsilon=1e-6, dropout_p=0.0, training=True):
+#     x_shape_og = tf.shape(x)
+#     x_flat = tf.reshape(x, [-1, x_shape_og[-1]])
 
-    # Normalize
-    mean = tf.reduce_mean(x_flat, axis=-1, keepdims=True)
-    var = tf.reduce_mean(tf.square(x_flat - mean), axis=-1, keepdims=True)
-    rstd = tf.math.rsqrt(var + eps)
-    norm = (x_flat - mean) * rstd
+#     # Normalize
+#     mean = tf.reduce_mean(x_flat, axis=-1, keepdims=True)
+#     var = tf.reduce_mean(tf.square(x_flat - mean), axis=-1, keepdims=True)
+#     rstd = tf.math.rsqrt(var + epsilon)
+#     norm = (x_flat - mean) * rstd
 
-    # Affine transformation
-    y = norm * weight + bias if bias is not None else norm * weight
+#     # Affine transformation
+#     y = norm * weight + bias if bias is not None else norm * weight
 
-    # Apply dropout if training
-    if training and dropout_p > 0.0:
-        y = tf.nn.dropout(y, rate=dropout_p)
+#     # Apply dropout if training
+#     if training and dropout_p > 0.0:
+#         y = tf.nn.dropout(y, rate=dropout_p)
 
-    y = tf.reshape(y, x_shape_og)
+#     y = tf.reshape(y, x_shape_og)
 
-    def grad(dy):
-        dy = tf.reshape(dy, [-1, x_shape_og[-1]])
-        N = tf.cast(tf.shape(dy)[-1], dy.dtype)
+#     def grad(dy):
+#         dy = tf.reshape(dy, [-1, x_shape_og[-1]])
+#         N = tf.cast(tf.shape(dy)[-1], dy.dtype)
 
-        # Gradient of LayerNorm (simplified version)
-        dx = (dy - tf.reduce_mean(dy, axis=-1, keepdims=True)
-              - norm * tf.reduce_mean(dy * norm, axis=-1, keepdims=True)) * rstd
+#         # Gradient of LayerNorm (simplified version)
+#         dx = (dy - tf.reduce_mean(dy, axis=-1, keepdims=True)
+#               - norm * tf.reduce_mean(dy * norm, axis=-1, keepdims=True)) * rstd
 
-        dw = tf.reduce_sum(dy * norm, axis=0)
-        db = tf.reduce_sum(dy, axis=0) if bias is not None else None
+#         dw = tf.reduce_sum(dy * norm, axis=0)
+#         db = tf.reduce_sum(dy, axis=0) if bias is not None else None
 
-        return tf.reshape(dx, x_shape_og), dw, db, None, None, None
+#         return tf.reshape(dx, x_shape_og), dw, db, None, None, None
 
-    return y, grad
+#     return y, grad
 
-def layer_norm_fn(
+
+# def layer_norm_custom(
+#     x,
+#     weight,
+#     bias=None,
+#     residual=None,
+#     x1=None,
+#     weight1=None,
+#     bias1=None,
+#     epsilon=1e-6,
+#     dropout_p=0.0,
+#     rowscale=None,
+#     prenorm=False,
+#     residual_in_fp32=False,
+#     is_rms_norm=False,
+#     return_dropout_mask=False,
+#     training=False,
+# ):
+#     x_shape_og = tf.shape(x)
+#     last_dim = x.shape[-1]
+#     x = tf.reshape(x, [-1, last_dim])
+#     if residual is not None:
+#         residual = tf.reshape(residual, [-1, last_dim])
+#     if x1 is not None:
+#         x1 = tf.reshape(x1, [-1, last_dim])
+#     if rowscale is not None:
+#         rowscale = tf.reshape(rowscale, [-1])
+
+#     # Normalization
+#     if is_rms_norm:
+#         mean_sq = tf.reduce_mean(tf.square(x), axis=-1, keepdims=True)
+#         normed = x / tf.sqrt(mean_sq + epsilon)
+#     else:
+#         mean = tf.reduce_mean(x, axis=-1, keepdims=True)
+#         var = tf.reduce_mean(tf.square(x - mean), axis=-1, keepdims=True)
+#         normed = (x - mean) / tf.sqrt(var + epsilon)
+
+#     output = normed * weight + (bias if bias is not None else 0.0)
+
+#     # Dropout
+#     if dropout_p > 0.0 and training:
+#         output = tf.nn.dropout(output, rate=dropout_p)
+
+#     # Residual connection
+#     if residual is not None:
+#         output += tf.cast(residual, tf.float32) if residual_in_fp32 else residual
+
+#     output = tf.reshape(output, x_shape_og)
+#     return output
+
+# class CustomLayerNorm(tf.keras.layers.Layer):
+#     def call(
+#         self,
+#         x,
+#         weight,
+#         bias,
+#         residual=None,
+#         x1=None,
+#         weight1=None,
+#         bias1=None,
+#         epsilon=1e-6,
+#         dropout_p=0.0,
+#         rowscale=None,
+#         prenorm=False,
+#         residual_in_fp32=False,
+#         is_rms_norm=False,
+#         return_dropout_mask=False,
+#         training=None,
+#     ):
+#     return layer_norm_custom(
+#         x,
+#         weight,
+#         bias,
+#         residual,
+#         x1,
+#         weight1,
+#         bias1,
+#         epsilon,
+#         dropout_p,
+#         rowscale,
+#         prenorm,
+#         residual_in_fp32,
+#         is_rms_norm,
+#         return_dropout_mask,
+#         training,
+#     )
+
+class LayerNormFn(tf.keras.layers.Layer):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+    
+    def call(
+        self,
+        x,
+        weight,
+        bias,
+        residual=None,
+        x1=None,
+        weight1=None,
+        bias1=None,
+        epsilon=1e-6,
+        dropout_p=0.0,
+        rowscale=None,
+        prenorm=False,
+        residual_in_fp32=False,
+        is_rms_norm=False,
+        return_dropout_mask=False,
+    ):
+        return lnf(
+            x,
+            weight,
+            bias,
+            residual,
+            x1,
+            weight1,
+            bias1,
+            epsilon,
+            dropout_p,
+            rowscale,
+            prenorm,
+            residual_in_fp32,
+            is_rms_norm,
+            return_dropout_mask,
+        ) 
+
+def lnf(
     x,
     weight,
     bias,
@@ -772,7 +897,7 @@ def layer_norm_fn(
     x1=None,
     weight1=None,
     bias1=None,
-    eps=1e-6,
+    epsilon=1e-6,
     dropout_p=0.0,
     rowscale=None,
     prenorm=False,
@@ -780,7 +905,15 @@ def layer_norm_fn(
     is_rms_norm=False,
     return_dropout_mask=False,
 ):
-    return layer_norm_custom(
+
+    SENTINEL = tf.constant([-999], dtype=x.dtype)
+
+    def is_sentinel(t):
+        # returns a boolean scalar tensor: True if t is sentinel, False otherwise
+        return tf.reduce_all(tf.equal(t, SENTINEL))
+
+    @tf.custom_gradient
+    def inside_function(
         x,
         weight,
         bias,
@@ -788,14 +921,197 @@ def layer_norm_fn(
         x1,
         weight1,
         bias1,
-        eps,
-        dropout_p,
         rowscale,
-        prenorm,
-        residual_in_fp32,
-        is_rms_norm,
-        return_dropout_mask,
+    ):
+        SENTINEL = tf.constant([-999.], dtype=x.dtype)
+
+        def is_sentinel(t):
+            return tf.reduce_all(tf.equal(t, SENTINEL))
+
+        use_bias = tf.logical_not(is_sentinel(bias))
+        use_residual = tf.logical_not(is_sentinel(residual))
+        use_x1 = tf.logical_not(is_sentinel(x1))
+        use_weight1 = tf.logical_not(is_sentinel(weight1))
+        use_bias1 = tf.logical_not(is_sentinel(bias1))
+        use_rowscale = tf.logical_not(is_sentinel(rowscale))
+
+        x = tf.reshape(x, (-1, x.shape[-1]))
+
+        residual = tf.cond(use_residual,
+            lambda: tf.reshape(residual, (-1, tf.shape(residual)[-1])),
+            lambda: SENTINEL,
+        )
+
+        x1 = tf.cond(use_x1,
+            lambda: tf.reshape(x1, (-1, tf.shape(x1)[-1])),
+            lambda: SENTINEL,
+        )
+
+        rowscale = tf.cond(use_rowscale,
+            lambda: tf.reshape(rowscale, [-1]),
+            lambda: SENTINEL,
+        )
+
+        residual = None if is_sentinel(residual) else residual
+        x1 = None if is_sentinel(x1) else x1
+        rowscale = None if is_sentinel(rowscale) else rowscale
+        bias = None if not use_bias else bias
+        weight1 = None if not use_weight1 else weight1
+        bias1 = None if not use_bias1 else bias1
+
+        residual_dtype = tf.float32 if (residual_in_fp32 and residual is None) else residual.dtype
+
+        y, y1, mean, rstd, residual_out, seeds, dropout_mask, dropout_mask1 = _layer_norm_fwd(
+            x,
+            weight,
+            bias,
+            epsilon,
+            residual,
+            x1,
+            weight1,
+            bias1,
+            dropout_p=dropout_p,
+            rowscale=rowscale,
+            residual_dtype=residual_dtype,
+            is_rms_norm=is_rms_norm,
+            return_dropout_mask=return_dropout_mask,
+        )
+
+        # original_shape = tf.shape(x)
+        # x_reshaped = tf.reshape(x, [-1, tf.shape(x)[-1]])
+
+        # residual_reshaped = tf.cond(
+        #     use_residual,
+        #     lambda: tf.reshape(residual, [-1, tf.shape(residual)[-1]]),
+        #     lambda: SENTINEL,
+        # )
+        # x1_reshaped = tf.cond(
+        #     use_x1,
+        #     lambda: tf.reshape(x1, [-1, tf.shape(x1)[-1]]),
+        #     lambda: SENTINEL,
+        # )
+        # rowscale_reshaped = tf.cond(
+        #     use_rowscale,
+        #     lambda: tf.reshape(rowscale, [-1]),
+        #     lambda: SENTINEL,
+        # )
+
+        # def _norm(input_x, gamma, beta):
+        #     mean = tf.reduce_mean(input_x, axis=-1, keepdims=True)
+        #     variance = tf.reduce_mean(tf.square(input_x - mean), axis=-1, keepdims=True)
+        #     rstd = tf.math.rsqrt(variance + epsilon)
+        #     normalized = (input_x - mean) * rstd
+        #     print("normalized, gamma, beta:", normalized, gamma, beta)
+        #     return normalized * gamma + beta, mean, rstd
+
+        # y, mean, rstd = _norm(x_reshaped, weight, tf.where(use_bias, bias, tf.zeros_like(bias)))
+
+        # y1 = tf.cond(
+        #     tf.logical_and(use_x1, tf.logical_and(use_weight1, use_bias1)),
+        #     lambda: _norm(x1_reshaped, weight1, bias1)[0],
+        #     lambda: SENTINEL,
+        # )
+
+        # dropout_mask = None
+        # if dropout_p > 0.0:
+        #     dropout_mask = tf.cast(tf.random.uniform(tf.shape(y)) >= dropout_p, y.dtype)
+        #     y = y * dropout_mask / (1.0 - dropout_p)
+
+        # y = tf.reshape(y, original_shape)
+
+        # y1 = tf.cond(
+        #     use_x1 & use_weight1 & use_bias1,
+        #     lambda: tf.reshape(y1, original_shape),
+        #     lambda: SENTINEL,
+        # )
+
+        # residual_out = tf.cond(
+        #     use_residual,
+        #     lambda: tf.reshape(residual_reshaped, original_shape),
+        #     lambda: SENTINEL,
+        # )
+
+        # def grad(dy, *grad_args):
+        #     dy_reshaped = tf.reshape(dy, [-1, tf.shape(dy)[-1]])
+
+        #     def _grad_norm(dy_, x_, gamma, mean_, rstd_):
+        #         N = tf.cast(tf.shape(x_)[-1], dy_.dtype)
+        #         x_mu = x_ - mean_
+        #         dx_hat = dy_ * gamma
+        #         dvar = tf.reduce_sum(dx_hat * x_mu, axis=-1, keepdims=True) * -0.5 * tf.pow(rstd_, 3)
+        #         dmean = tf.reduce_sum(dx_hat * -rstd_, axis=-1, keepdims=True) + dvar * tf.reduce_mean(-2.0 * x_mu, axis=-1, keepdims=True)
+        #         dx = dx_hat * rstd_ + dvar * 2 * x_mu / N + dmean / N
+        #         dgamma = tf.reduce_sum(dy_ * (x_ - mean_) * rstd_, axis=0)
+        #         dbeta = tf.reduce_sum(dy_, axis=0)
+        #         return dx, dgamma, dbeta
+
+        #     dx, dgamma, dbeta = _grad_norm(dy_reshaped, x_reshaped, weight, mean, rstd)
+
+        #     if dropout_p > 0.0:
+        #         dx = dx * dropout_mask / (1.0 - dropout_p)
+
+        #     dx = tf.reshape(dx, original_shape)
+
+            # return (
+            #     dx,
+            #     dgamma,
+            #     dbeta,
+            #     tf.zeros_like(residual) if use_residual else SENTINEL,
+            #     tf.zeros_like(x1) if use_x1 else SENTINEL,
+            #     tf.zeros_like(weight1) if use_weight1 else SENTINEL,
+            #     tf.zeros_like(bias1) if use_bias1 else SENTINEL,
+            #     tf.zeros_like(rowscale) if use_rowscale else SENTINEL,
+            # )
+
+        # Create zero tensors with the right shape for missing outputs
+        zero_y1 = tf.zeros_like(y)
+
+        if not return_dropout_mask:
+            if not use_weight1:
+                if not prenorm:
+                    outputs = (y, zero_y1)  # include y1 placeholder
+                else:
+                    outputs = (y, zero_y1, residual_out)
+            else:
+                if not prenorm:
+                    outputs = (y, y1)
+                else:
+                    outputs = (y, y1, residual_out)
+        else:
+            zero_dropout_mask = tf.zeros_like(y, dtype=tf.bool)  # or tf.zeros_like(y), adjust dtype as needed
+            none_placeholder = tf.constant(0)  # or tf.zeros([]), a scalar placeholder
+
+            if not use_weight1:
+                if not prenorm:
+                    outputs = (y, zero_dropout_mask, zero_y1, none_placeholder)
+                else:
+                    outputs = (y, zero_y1, residual_out, zero_dropout_mask, none_placeholder)
+            else:
+                if not prenorm:
+                    outputs = (y, y1, dropout_mask, none_placeholder)
+                else:
+                    outputs = (y, y1, residual_out, dropout_mask, none_placeholder)
+
+        print("RMS output:", outputs)
+
+        return outputs, grad
+
+    # Replace all None inputs with SENTINEL tensor
+    return inside_function(
+        x,
+        weight,
+        bias if bias is not None else SENTINEL,
+        residual if residual is not None else SENTINEL,
+        x1 if x1 is not None else SENTINEL,
+        weight1 if weight1 is not None else SENTINEL,
+        bias1 if bias1 is not None else SENTINEL,
+        rowscale if rowscale is not None else SENTINEL,
     )
+
+
+
+def layer_norm_fn():
+    return LayerNormFn()
 
 
 def rms_norm_fn(
@@ -806,14 +1122,14 @@ def rms_norm_fn(
     x1=None,
     weight1=None,
     bias1=None,
-    eps=1e-6,
+    epsilon=1e-6,
     dropout_p=0.0,
     rowscale=None,
     prenorm=False,
     residual_in_fp32=False,
     return_dropout_mask=False,
-):
-    return layer_norm_custom(
+):  
+    return lnf(
         x,
         weight,
         bias,
@@ -821,7 +1137,7 @@ def rms_norm_fn(
         x1,
         weight1,
         bias1,
-        eps,
+        epsilon,
         dropout_p,
         rowscale,
         prenorm,
@@ -848,13 +1164,13 @@ class RMSNorm(tf.keras.layers.Layer):
     def reset_parameters(self):
         self.weight.assign(tf.ones_like(self.weight))
 
-    def forward(self, x, residual=None, prenorm=False, residual_in_fp32=False):
+    def call(self, x, residual=None, prenorm=False, residual_in_fp32=False):
         return rms_norm_fn(
             x,
             self.weight,
             self.bias,
             residual=residual,
-            eps=self.eps,
+            epsilon=self.epsilon,
             dropout_p=self.drop.p if self.drop is not None and self.training else 0.0,
             prenorm=prenorm,
             residual_in_fp32=residual_in_fp32,
@@ -869,7 +1185,7 @@ def layer_norm_linear_fn(
     linear_weight,
     linear_bias,
     residual=None,
-    eps=1e-6,
+    epsilon=1e-6,
     prenorm=False,
     residual_in_fp32=False,
     is_rms_norm=False,
@@ -886,7 +1202,7 @@ def layer_norm_linear_fn(
         residual_dtype = tf.float32 if residual_in_fp32 else None
 
     # Forward logic
-    @tf.custom_gradient
+    @tf.custom_gradient # EMRAN 
     def _layer_norm_linear(x_2d):
 
         # Assumed to be implemented similarly to PyTorch
@@ -894,7 +1210,7 @@ def layer_norm_linear_fn(
             x_2d,
             norm_weight,
             norm_bias,
-            eps,
+            epsilon,
             residual=residual_2d,
             out_dtype=None,  # TensorFlow handles mixed precision natively
             residual_dtype=residual_dtype,
@@ -926,7 +1242,7 @@ def layer_norm_linear_fn(
                 x_2d,
                 norm_weight,
                 norm_bias,
-                eps,
+                epsilon,
                 mean,
                 rstd,
                 dresidual=dresidual,
@@ -968,7 +1284,7 @@ def layer_norm_linear_fn(
     linear_weight,
     linear_bias,
     residual=None,
-    eps=1e-6,
+    epsilon=1e-6,
     prenorm=False,
     residual_in_fp32=False,
     is_rms_norm=False,
@@ -980,7 +1296,7 @@ def layer_norm_linear_fn(
         linear_weight,
         linear_bias,
         residual,
-        eps,
+        epsilon,
         prenorm,
         residual_in_fp32,
         is_rms_norm,

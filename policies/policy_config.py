@@ -6,7 +6,6 @@ from ray.tune.registry import register_trainable
 from policies.drama.drama import Drama, DramaConfig
 from ray.rllib.algorithms.dreamerv3 import DreamerV3Config
 from ray.rllib.algorithms.ppo import PPOConfig
-from ray.rllib.algorithms.maddpg import MADDPGConfig
 from ray.rllib.algorithms.algorithm import Algorithm
 
 def drama_config(train_configs, env_name, model_configs):
@@ -39,7 +38,6 @@ def ppo_config(train_configs, env_name, model_configs):
         "train_batch_size": train_configs.getint('horizon') * train_configs.getint('num_workers')
         if not train_configs.getint('train_batch_size') else train_configs.getint('train_batch_size'),
         "gamma": 0.999,   # discount rate
-        "model": model,
         "use_gae": True,
         "lambda": 0.97,
         "kl_target": 0.02,
@@ -49,17 +47,6 @@ def ppo_config(train_configs, env_name, model_configs):
         "no_done_at_end": True,
     }
 
-
-def maddpg_config(train_configs, env_name, model_configs):
-    return {
-        "env": env_name,
-        "log_level": train_configs.get('log_level'),
-        "num_workers": train_configs.getint('num_workers'),
-        "train_batch_size": train_configs.getint('train_batch_size'),
-        "horizon": train_configs.getint('horizon'),
-        "rollout_fragment_length": 720,
-        "gamma": 0.95,  # discount rate
-    }
 
 class PolicyConfig:
     def __init__(self, env_name, alg_configs, train_configs, model_configs=None):
@@ -75,8 +62,6 @@ class PolicyConfig:
             return dreamerv3_config(train_configs, self.env_name, model_configs)
         elif self.name == 'PPO':
             return ppo_config(train_configs, self.env_name, model_configs)
-        elif self.name == 'MADDPG':
-            return maddpg_config(train_configs, self.env_name, model_configs)
         else:
             raise ValueError(f"Unknown algorithm name: {self.name}")
 
@@ -88,8 +73,6 @@ class PolicyConfig:
             return DreamerV3Config()
         elif self.name == "PPO":
             return PPOConfig()
-        elif self.name == "MADDPG":
-            return MADDPGConfig()
         else:
             return None  # fallback to Algorithm.from_config
 

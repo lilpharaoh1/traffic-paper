@@ -29,10 +29,11 @@ class Block(tf.keras.layers.Layer):
         super().__init__()
         self.residual_in_fp32 = residual_in_fp32
         self.fused_add_norm = fused_add_norm
-        self.norm = norm_cls(dim)
+        self.norm = norm_cls(axis=-1)
         self.mixer = mixer_cls(dim)
-        if mlp_cls is not tf.keras.layers.Activation('linear'):
-            self.norm2 = norm_cls(dim)
+        print("MLP_CLS:", mlp_cls, not isinstance(mlp_cls, tf.keras.layers.Activation))
+        if not isinstance(mlp_cls, tf.keras.layers.Activation):
+            self.norm2 = norm_cls(axis=-1)
             self.mlp = mlp_cls(dim)
         else:
             self.mlp = None
@@ -44,8 +45,11 @@ class Block(tf.keras.layers.Layer):
         else:
             self.dropout = tf.keras.layers.Dropout(dropout_p) # "Attention is all you need sec 5.4 dropout"
         self.dropout_p = dropout_p
-    def forward(
-            self, hidden_states: Tensor, residual: Optional[Tensor] = None, inference_params=None, **mixer_kwargs
+
+        print("CHECKING_MLP:", mlp_cls)
+
+    def call(
+            self, hidden_states: Tensor, residual: Optional[Tensor] = None, inference_params=None, training=False, **mixer_kwargs
     ):
         r"""Pass the input through the encoder layer.
 
@@ -60,18 +64,19 @@ class Block(tf.keras.layers.Layer):
             if self.residual_in_fp32:
                 residual = residual.to(torch.float32)
         else:
-            hidden_states, residual = layer_norm_fn(
-                hidden_states,
-                self.norm.weight,
-                self.norm.bias,
-                residual=residual,
-                prenorm=True,
-                residual_in_fp32=self.residual_in_fp32,
-                eps=self.norm.eps,
-                is_rms_norm=isinstance(self.norm, RMSNorm),
-                dropout_p=self.dropout_p if self.training else 0.0
-            )
-        hidden_states = self.mixer(hidden_states, inference_params=inference_params, **mixer_kwargs)
+            hidden_states = self.norm(hidden_states) # EMRAN using LayerNormalization instead (for now)
+        #     hidden_states, residual = layer_norm_fn(
+        #         hidden_states,
+        #         self.norm.weight,
+        #         self.norm.bias,
+        #         residual=residual,
+        #         prenorm=True,
+        #         residual_in_fp32=self.residual_in_fp32,
+        #         epsilon=self.norm.epsilon,
+        #         is_rms_norm=isinstance(self.norm, RMSNorm),
+        #         dropout_p=self.dropout_p if training else 0.0 # EMRAN need to confirm training is correctly passed by Keras
+        #     )
+        hidden_states = self.mixer(hidden_states, **mixer_kwargs) # EMRAN No longer passing inference_params, must be some remenant of Mamba1
 
         if self.mlp is not None:
             if not self.fused_add_norm:
@@ -81,17 +86,18 @@ class Block(tf.keras.layers.Layer):
                 if self.residual_in_fp32:
                     residual = residual.to(torch.float32)
             else:
-                hidden_states, residual = layer_norm_fn(
-                    hidden_states,
-                    self.norm2.weight,
-                    self.norm2.bias,
-                    residual=residual,
-                    prenorm=True,
-                    residual_in_fp32=self.residual_in_fp32,
-                    eps=self.norm2.eps,
-                    is_rms_norm=isinstance(self.norm2, RMSNorm),
-                    dropout_p=self.dropout_p if self.training else 0.0
-                )
+                hidden_states = self.norm2(hidden_states) # EMRAN using LayerNormalization instead (for now)
+                # hidden_states, residual = layer_norm_fn(
+                #     hidden_states,
+                #     self.norm2.weight,
+                #     self.norm2.bias,
+                #     residual=residual,
+                #     prenorm=True,
+                #     residual_in_fp32=self.residual_in_fp32,
+                #     epsilon=self.norm2.epsilon,
+                #     is_rms_norm=isinstance(self.norm2, RMSNorm),
+                #     dropout_p=self.dropout_p if training else 0.0 # EMRAN need to confirm training is correctly passed by Keras
+                # )
             hidden_states = self.mlp(hidden_states)
 
         return hidden_states, residual

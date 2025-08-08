@@ -80,9 +80,11 @@ def create_block(
         )
     else:
         mixer_cls = partial(MHA, layer_idx=layer_idx, **attn_cfg, **factory_kwargs)
-    norm_cls = partial(
-        tf.keras.layers.LayerNormalization if not rms_norm else RMSNorm, epsilon=norm_epsilon, **factory_kwargs
-    )
+    norm_cls = tf.keras.layers.LayerNormalization
+    # EMRAN not using triton LayerNormalization
+    # partial(
+    #     tf.keras.layers.LayerNormalization if not rms_norm else RMSNorm, epsilon=norm_epsilon, **factory_kwargs
+    # )
     if get_intermediate_units(model_size) == 0:
         mlp_cls = tf.keras.layers.Activation('linear')
     else:
@@ -203,7 +205,7 @@ class PositionalEncoding1D(tf.keras.layers.Layer):
 
         self.pos_emb = tf.keras.layers.Embedding(input_dim=self.max_length, output_dim=embed_dim, **factory_kwargs)
 
-    def forward(self, feat):
+    def call(self, feat):
         pos_emb = self.pos_emb(tf.range(self.max_length))
         pos_emb = repeat(pos_emb, "L D -> B L D", B=feat.shape[0])
 
@@ -246,13 +248,14 @@ class MixerModel(tf.keras.Model):
 
         # self.embedding = nn.Embedding(vocab_size, d_model, **factory_kwargs)
 
-        self.stem = tf.keras.Sequential([
+        self.stem = [# tf.keras.Sequential([
             tf.keras.layers.Dense(units=get_model_units(model_size), use_bias=True, kernel_initializer='glorot_uniform', **factory_kwargs),
-            RMSNorm(get_model_units(model_size), epsilon=norm_epsilon, **factory_kwargs),
+            tf.keras.layers.LayerNormalization(epsilon=norm_epsilon),
+            # RMSNorm(get_model_units(model_size), epsilon=norm_epsilon, **factory_kwargs), # EMRAN replaced RMSNorm with LayerNormalization
             tf.keras.layers.Activation('swish'),
             # nn.Linear(stoch_dim+action_dim, d_model, bias=True, **factory_kwargs),
             # nn.modules.normalization.RMSNorm(d_model, **factory_kwargs),
-        ])
+        ]# ])
      
         # We change the order of residual and layer norm:
         # Instead of LN -> Attn / MLP -> Add, we do:
@@ -263,6 +266,9 @@ class MixerModel(tf.keras.Model):
         if self.fused_add_norm:
             if layer_norm_fn is None or rms_norm_fn is None:
                 raise ImportError("Failed to import Triton LayerNorm / RMSNorm kernels")
+            else:
+                layer_norm = tf.keras.layers.LayerNormalization(epsilon=norm_epsilon)
+                norm_dropout = tf.keras.layers.Dropout(dropout_p)
         else:
             self.dropout = tf.keras.layers.Dropout(dropout_p) # "Attention is all you need sec 5.4 dropout"
         self.dropout_p = dropout_p
@@ -298,6 +304,7 @@ class MixerModel(tf.keras.Model):
         #         n_residuals_per_layer=1 if get_intermediate_units(model_size) == 0 else 2,  # 2 if we have MLP
         #     )
         # )
+
         for layer in self.submodules:
             _init_weights(
                 layer,
@@ -312,13 +319,21 @@ class MixerModel(tf.keras.Model):
             for i, layer in enumerate(self.blocks)
         }
 
-    def forward(self, samples, action, inference_params=None, **mixer_kwargs):
-        action = tf.one_hot(action.long(), depth=self.action_dim).float()
-        hidden_states = self.stem(tf.concat([samples, action], axis=-1))
+    def call(self, samples, action, inference_params=None, **mixer_kwargs):
+        # action = tf.cast(tf.one_hot(tf.cast(action, tf.int64), depth=self.action_dim), tf.float32)
+        # print("\n\n\n\n\n\n\n\n\n\n\n\n samples.shape, action.shape:", samples.shape, action.shape)
+        data = tf.concat([samples, action], axis=-1)
+        print("\n\n\n\n\n\n\n\n\n\n\n\n data.shape:", data.shape)
+        print("samples.shape, action.shape:", samples.shape, action.shape)
+        # hidden_states = self.stem(data)
+        hidden_states = data
+        for idx, block in enumerate(self.stem):
+            print(f"{idx}) Using layer {block} to process {hidden_states}")
+            hidden_states = block(data)
             
         residual = None
-        for layer in self.blocks:
-            hidden_states, residual = layer(
+        for block in self.blocks:
+            hidden_states, residual = block(
                 hidden_states, residual, inference_params=inference_params, **mixer_kwargs
             )
         if not self.fused_add_norm:
@@ -326,18 +341,21 @@ class MixerModel(tf.keras.Model):
             residual = (hidden_states + residual) if residual is not None else hidden_states
             hidden_states = self.norm_f(tf.cast(residual, self.norm_f.weight.dtype))
         else:
+            # EMRAN using LayerNormalization (for now)
             # Set prenorm=False here since we don't need the residual
-            hidden_states = layer_norm_fn(
-                hidden_states,
-                self.norm_f.weight,
-                self.norm_f.bias,
-                epss=self.norm_f.eps,
-                residual=residual,
-                prenorm=False,
-                residual_in_fp32=self.residual_in_fp32,
-                is_rms_norm=isinstance(self.norm_f, RMSNorm),
-                dropout_p=self.dropout_p if self.training else 0.0
-            )
+            # hidden_states = layer_norm(
+            #     hidden_states,
+            #     self.norm_f.weight,
+            #     self.norm_f.bias,
+            #     epsilon=self.norm_f.epsilon,
+            #     residual=residual,
+            #     prenorm=False,
+            #     residual_in_fp32=self.residual_in_fp32,
+            #     is_rms_norm=isinstance(self.norm_f, RMSNorm),
+            #     dropout_p=self.dropout_p if self.training else 0.0
+            # )
+            hidden_states = layer_norm(hidden_states)
+            hidden_state = norm_dropout(hidden_state)
         return hidden_states
 
 
@@ -398,7 +416,7 @@ class MambaWrapperModel(tf.keras.Model, GenerationMixin):
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
         return self.backbone.allocate_inference_cache(batch_size, max_seqlen, dtype=dtype, **kwargs)
 
-    def forward(self, samples, action, inference_params=None, num_last_tokens=0, **mixer_kwargs):
+    def call(self, samples, action, inference_params=None, num_last_tokens=0, **mixer_kwargs):
         """
         num_last_tokens: if > 0, only return the logits for the last n tokens
         """

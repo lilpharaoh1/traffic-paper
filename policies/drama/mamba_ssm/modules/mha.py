@@ -206,7 +206,7 @@ class MHA(tf.keras.layers.Layer):
                 causal=False,
             )
 
-    def forward(self, x, inference_params=None):
+    def call(self, x, inference_params=None):
         """
         Arguments:
             x: (batch, seqlen, hidden_dim) (where hidden_dim = num heads * head dim) if

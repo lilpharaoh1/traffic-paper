@@ -8,6 +8,7 @@ import numpy as np
 
 import gymnasium as gym
 import tree  # pip install dm_tree
+from einops import rearrange, repeat, reduce
 
 from policies.drama.tf.models.components.continue_predictor import (
     ContinuePredictor,
@@ -31,9 +32,72 @@ from ray.rllib.utils.tf_utils import symlog
 
 from policies.drama.mamba_ssm import MambaWrapperModel, MambaConfig, InferenceParams, update_graph_cache
 
+from policies.drama.utils import (
+    get_dense_hidden_units,
+    get_num_dense_layers,
+    get_num_z_categoricals,
+    get_num_z_categoricals,
+    get_num_z_classes,
+)
 
 _, tf, _ = try_import_tf()
+import tensorflow_probability as tfp
 
+class DistHead(tf.keras.layers.Layer):
+    def __init__(self, hidden_state_dim, categorical_dim, class_dim, unimix_ratio=0.01, dtype=None, **kwargs):
+        super().__init__(dtype=dtype, **kwargs)
+        self.stoch_dim = categorical_dim
+        self.class_dim = class_dim
+        self.unimix_ratio = unimix_ratio
+
+        # Define linear layers
+        self.post_head = tf.keras.layers.Dense(categorical_dim * class_dim, dtype=dtype)
+        self.prior_head = tf.keras.layers.Dense(categorical_dim * class_dim, dtype=dtype)
+
+    def unimix(self, logits, mixing_ratio=0.01):
+        if mixing_ratio > 0:
+            probs = tf.nn.softmax(logits, axis=-1)
+            uniform = tf.ones_like(probs) / tf.cast(self.stoch_dim, self.dtype)
+            mixed_probs = mixing_ratio * uniform + (1.0 - mixing_ratio) * probs
+            logits = tf.math.log(mixed_probs + 1e-8)  # add small value to prevent log(0)
+        return logits
+
+    def forward_post(self, x):
+        logits = self.post_head(x)  # shape: [B, L, K*C]
+        logits = tf.reshape(logits, shape=(-1, tf.shape(logits)[1], self.stoch_dim, self.class_dim))  # [B, L, K, C]
+        logits = self.unimix(logits, self.unimix_ratio)
+        return logits
+
+    def forward_prior(self, x):
+        logits = self.prior_head(x)  # shape: [B, L, K*C]
+        logits = tf.reshape(logits, shape=(-1, tf.shape(logits)[1], self.stoch_dim, self.class_dim))  # [B, L, K, C]
+        logits = self.unimix(logits, self.unimix_ratio)
+        return logits
+
+@tf.function
+def straight_through_gradient(logits, sample_mode="random_sample"):
+    dist = tfp.distributions.OneHotCategorical(logits=logits)
+    probs = dist.probs_parameter()
+
+    if sample_mode == "random_sample":
+        sample = dist.sample()
+        # Straight-through gradient: pass forward `sample`, but use gradient of `probs`
+        print("\n\n\n\n\n\nn\n\n\n\n\n\nn\n\n\n")
+        print("sample, dist, dist.probs:", sample, dist, dist.probs_parameter())
+        sample = tf.cast(dist.sample(), dtype=probs.dtype)
+        sample = tf.stop_gradient(sample - probs) + probs
+
+    elif sample_mode == "mode":
+        # argmax gives the mode
+        sample = tf.one_hot(tf.argmax(logits, axis=-1), depth=logits.shape[-1])
+
+    elif sample_mode == "probs":
+        sample = dist.probs
+
+    return sample
+
+def flatten_sample(sample):
+        return rearrange(sample, "B L K C -> B L (K C)")
 
 class WorldModel(tf.keras.Model):
     """WorldModel component of [1] w/ encoder, decoder, RSSM, reward/cont. predictors.
@@ -118,16 +182,23 @@ class WorldModel(tf.keras.Model):
         # Encoder (latent 1D vector generator) (xt -> lt).
         self.encoder = encoder
 
-        # Posterior predictor consisting of an MLP and a RepresentationLayer:
-        # [ht, lt] -> zt.
-        self.posterior_mlp = MLP(
-            model_size=self.model_size,
-            output_layer_size=None,
-            # In Danijar's code, the posterior predictor only has a single layer,
-            # no matter the model size:
-            num_dense_layers=1,
-            name="posterior_mlp",
+        self.dist_head = DistHead(
+            hidden_state_dim=get_dense_hidden_units(self.model_size), # EMRAN this isn't exactly right, might need unique function size
+            categorical_dim=get_num_z_categoricals(self.model_size), # EMRAN copied what was used in Representation layer, size may not be correct 
+            class_dim=get_num_z_classes(self.model_size), # EMRAN copied what was used in Representation layer, size may not be correct
+            dtype=self.dtype # EMRAN idk if this is right bruh
         )
+
+        # # Posterior predictor consisting of an MLP and a RepresentationLayer:
+        # # [ht, lt] -> zt.
+        # self.posterior_mlp = MLP(
+        #     model_size=self.model_size,
+        #     output_layer_size=None,
+        #     # In Danijar's code, the posterior predictor only has a single layer,
+        #     # no matter the model size:
+        #     num_dense_layers=1,
+        #     name="posterior_mlp",
+        # )
         # The (posterior) z-state generating layer.
         self.posterior_representation_layer = RepresentationLayer(
             model_size=self.model_size,
@@ -277,8 +348,16 @@ class WorldModel(tf.keras.Model):
                 h-states and computed z-states to yield the next h-states.
             is_first: The batch (B, T) of `is_first` flags.
         """
+
+        print("\n\n\n\n\n\n\n\n\n\n\n\n\ninspecting forward_train parameters")
+        print("actions:", actions.shape, actions)
+        print("is_first:", is_first.shape, is_first)
+        print("observations (before):", observations.shape, observations)
+
         if self.symlog_obs:
             observations = symlog(observations)
+
+        print("observations (after):", observations.shape, observations)
 
         # Compute bare encoder outs (not z; this is done later with involvement of the
         # sequence model and the h-states).
@@ -289,102 +368,116 @@ class WorldModel(tf.keras.Model):
             observations, shape=tf.concat([[-1], shape[2:]], axis=0)
         )
 
-        encoder_out = self.encoder(tf.cast(observations, self._comp_dtype))
-        # Unfold time dimension.
-        encoder_out = tf.reshape(
-            encoder_out, shape=tf.concat([[B, T], tf.shape(encoder_out)[1:]], axis=0)
+        embedding = self.encoder(tf.cast(observations, self._comp_dtype))
+        print("(before) embedding.shape:", embedding)
+        embedding = tf.reshape(
+            embedding, shape=tf.concat([[B, T], tf.shape(embedding)[1:]], axis=0)
         )
-        # Make time major for faster upcoming loop.
-        encoder_out = tf.transpose(
-            encoder_out, perm=[1, 0] + list(range(2, len(encoder_out.shape.as_list())))
-        )
-        # encoder_out=[T, B, ...]
+        print("(after) embedding.shape:", embedding)
+        post_logits = self.dist_head.forward_post(embedding)
+        sample = straight_through_gradient(post_logits, sample_mode="random_sample")
+        print("sample.shape:", sample)
+        flattened_sample = flatten_sample(sample)
+        print("flattened_sample.shape:", flattened_sample)
 
-        initial_states = tree.map_structure(
-            lambda s: tf.repeat(s, B, axis=0), self.get_initial_state()
-        )
+        # decoding image
+        obs_hat = self.decoder(flattened_sample)
 
-        # Make actions and `is_first` time-major.
-        actions = tf.transpose(
-            tf.cast(actions, self._comp_dtype),
-            perm=[1, 0] + list(range(2, tf.shape(actions).shape.as_list()[0])),
-        )
-        is_first = tf.transpose(tf.cast(is_first, self._comp_dtype), perm=[1, 0])
+        # encoder_out = self.encoder(tf.cast(observations, self._comp_dtype))
+        # # Unfold time dimension.
+        # encoder_out = tf.reshape(
+        #     encoder_out, shape=tf.concat([[B, T], tf.shape(encoder_out)[1:]], axis=0)
+        # )
+        # # Make time major for faster upcoming loop.
+        # encoder_out = tf.transpose(
+        #     encoder_out, perm=[1, 0] + list(range(2, len(encoder_out.shape.as_list())))
+        # )
+        # # encoder_out=[T, B, ...]
 
-        # Loop through the T-axis of our samples and perform one computation step at
-        # a time. This is necessary because the sequence model's output (h(t+1)) depends
-        # on the current z(t), but z(t) depends on the current sequence model's output
-        # h(t).
-        z_t0_to_T = [initial_states["z"]]
-        z_posterior_probs = []
-        z_prior_probs = []
-        h_t0_to_T = [initial_states["h"]]
-        for t in range(self.batch_length_T):
-            # If first, mask it with initial state/actions.
-            h_tm1 = self._mask(h_t0_to_T[-1], 1.0 - is_first[t])  # zero out
-            h_tm1 = h_tm1 + self._mask(initial_states["h"], is_first[t])  # add init
+        # # Make actions and `is_first` time-major.
+        # actions = tf.transpose(
+        #     tf.cast(actions, self._comp_dtype),
+        #     perm=[1, 0] + list(range(2, tf.shape(actions).shape.as_list()[0])),
+        # )
+        # is_first = tf.transpose(tf.cast(is_first, self._comp_dtype), perm=[1, 0])
 
-            z_tm1 = self._mask(z_t0_to_T[-1], 1.0 - is_first[t])  # zero out
-            z_tm1 = z_tm1 + self._mask(initial_states["z"], is_first[t])  # add init
+        # # Loop through the T-axis of our samples and perform one computation step at
+        # # a time. This is necessary because the sequence model's output (h(t+1)) depends
+        # # on the current z(t), but z(t) depends on the current sequence model's output
+        # # h(t).
+        # z_t0_to_T = [initial_states["z"]]
+        # z_posterior_probs = []
+        # z_prior_probs = []
+        # h_t0_to_T = [initial_states["h"]]
+        # for t in range(self.batch_length_T):
+        #     # If first, mask it with initial state/actions.
+        #     h_tm1 = self._mask(h_t0_to_T[-1], 1.0 - is_first[t])  # zero out
+        #     h_tm1 = h_tm1 + self._mask(initial_states["h"], is_first[t])  # add init
 
-            # Zero out actions (no special learnt initial state).
-            a_tm1 = self._mask(actions[t - 1], 1.0 - is_first[t])
+        #     z_tm1 = self._mask(z_t0_to_T[-1], 1.0 - is_first[t])  # zero out
+        #     z_tm1 = z_tm1 + self._mask(initial_states["z"], is_first[t])  # add init
 
-            # Perform one RSSM (sequence model) step to get the current h.
-            h_t = self.sequence_model(a=a_tm1, h=h_tm1, z=z_tm1)
-            h_t0_to_T.append(h_t)
+        #     # Zero out actions (no special learnt initial state).
+        #     a_tm1 = self._mask(actions[t - 1], 1.0 - is_first[t])
 
-            posterior_mlp_input = tf.concat([encoder_out[t], h_t], axis=-1)
-            repr_input = self.posterior_mlp(posterior_mlp_input)
-            # Draw one z-sample (z(t)) and also get the z-distribution for dynamics and
-            # representation loss computations.
-            z_t, z_probs = self.posterior_representation_layer(repr_input)
-            # z_t=[B, num_categoricals, num_classes]
-            z_posterior_probs.append(z_probs)
-            z_t0_to_T.append(z_t)
+        #     # Perform one RSSM (sequence model) step to get the current h.
+        #     h_t = self.sequence_model(a=a_tm1, h=h_tm1, z=z_tm1)
+        #     h_t0_to_T.append(h_t)
 
-            # Compute the predicted z_t (z^) using the dynamics model.
-            _, z_probs = self.dynamics_predictor(h_t)
-            z_prior_probs.append(z_probs)
+        #     posterior_mlp_input = tf.concat([encoder_out[t], h_t], axis=-1)
+        #     repr_input = self.posterior_mlp(posterior_mlp_input)
+        #     # Draw one z-sample (z(t)) and also get the z-distribution for dynamics and
+        #     # representation loss computations.
+        #     z_t, z_probs = self.posterior_representation_layer(repr_input)
+        #     # z_t=[B, num_categoricals, num_classes]
+        #     z_posterior_probs.append(z_probs)
+        #     z_t0_to_T.append(z_t)
 
-        # Stack at time dimension to yield: [B, T, ...].
-        h_t1_to_T = tf.stack(h_t0_to_T[1:], axis=1)
-        z_t1_to_T = tf.stack(z_t0_to_T[1:], axis=1)
+        #     # Compute the predicted z_t (z^) using the dynamics model.
+        #     _, z_probs = self.dynamics_predictor(h_t)
+        #     z_prior_probs.append(z_probs)
 
-        # Fold time axis to retrieve the final (loss ready) Independent distribution
-        # (over `num_categoricals` Categoricals).
-        z_posterior_probs = tf.stack(z_posterior_probs, axis=1)
-        z_posterior_probs = tf.reshape(
-            z_posterior_probs,
-            shape=[-1] + z_posterior_probs.shape.as_list()[2:],
-        )
-        # Fold time axis to retrieve the final (loss ready) Independent distribution
-        # (over `num_categoricals` Categoricals).
-        z_prior_probs = tf.stack(z_prior_probs, axis=1)
-        z_prior_probs = tf.reshape(
-            z_prior_probs,
-            shape=[-1] + z_prior_probs.shape.as_list()[2:],
-        )
+        # # Stack at time dimension to yield: [B, T, ...].
+        # h_t1_to_T = tf.stack(h_t0_to_T[1:], axis=1)
+        # z_t1_to_T = tf.stack(z_t0_to_T[1:], axis=1)
 
-        # Fold time dimension for parallelization of all dependent predictions:
-        # observations (reproduction via decoder), rewards, continues.
-        h_BxT = tf.reshape(h_t1_to_T, shape=[-1] + h_t1_to_T.shape.as_list()[2:])
-        z_BxT = tf.reshape(z_t1_to_T, shape=[-1] + z_t1_to_T.shape.as_list()[2:])
+        # # Fold time axis to retrieve the final (loss ready) Independent distribution
+        # # (over `num_categoricals` Categoricals).
+        # z_posterior_probs = tf.stack(z_posterior_probs, axis=1)
+        # z_posterior_probs = tf.reshape(
+        #     z_posterior_probs,
+        #     shape=[-1] + z_posterior_probs.shape.as_list()[2:],
+        # )
+        # # Fold time axis to retrieve the final (loss ready) Independent distribution
+        # # (over `num_categoricals` Categoricals).
+        # z_prior_probs = tf.stack(z_prior_probs, axis=1)
+        # z_prior_probs = tf.reshape(
+        #     z_prior_probs,
+        #     shape=[-1] + z_prior_probs.shape.as_list()[2:],
+        # )
 
-        obs_distribution_means = tf.cast(self.decoder(h=h_BxT, z=z_BxT), tf.float32)
+        # # Fold time dimension for parallelization of all dependent predictions:
+        # # observations (reproduction via decoder), rewards, continues.
+        # h_BxT = tf.reshape(h_t1_to_T, shape=[-1] + h_t1_to_T.shape.as_list()[2:])
+        # z_BxT = tf.reshape(z_t1_to_T, shape=[-1] + z_t1_to_T.shape.as_list()[2:])
+
+        # dynamics model
+        print("\n\n\n\n\n\n\n\n\n\n\n\n\n flattended_sample.shape, actions.shape:", flattened_sample.shape, actions.shape)
+        dist_feat = self.sequence_model(flattened_sample, actions)
+        prior_logits = self.dist_head.forward_prior(dist_feat)
 
         # Compute (predicted) reward distributions.
-        rewards, reward_logits = self.reward_predictor(h=h_BxT, z=z_BxT)
+        rewards, reward_logits = self.reward_predictor(dist_feat)
 
         # Compute (predicted) continue distributions.
-        continues, continue_distribution = self.continue_predictor(h=h_BxT, z=z_BxT)
+        continues, continue_distribution = self.continue_predictor(dist_feat)
 
         # Return outputs for loss computation.
         # Note that all shapes are [BxT, ...] (time axis already folded).
         return {
             # Obs.
             "sampled_obs_symlog_BxT": observations,
-            "obs_distribution_means_BxT": obs_distribution_means,
+            "obs_distribution_means_BxT": None, # EMRAN used to be obs_distribution_means = tf.cast(self.decoder(h=h_BxT, z=z_BxT), tf.float32)
             # Rewards.
             "reward_logits_BxT": reward_logits,
             "rewards_BxT": rewards,
@@ -392,12 +485,12 @@ class WorldModel(tf.keras.Model):
             "continue_distribution_BxT": continue_distribution,
             "continues_BxT": continues,
             # Deterministic, continuous h-states (t1 to T).
-            "h_states_BxT": h_BxT,
+            "h_states_BxT": None, # EMRAN used to be h_BxT 
             # Sampled, discrete posterior z-states and their probs (t1 to T).
-            "z_posterior_states_BxT": z_BxT,
-            "z_posterior_probs_BxT": z_posterior_probs,
+            "z_posterior_states_BxT": None, # EMRAN used to be z_BxT
+            "z_posterior_probs_BxT": None, # EMRAN used to be z_posterior_probs
             # Probs of the prior z-states (t1 to T).
-            "z_prior_probs_BxT": z_prior_probs,
+            "z_prior_probs_BxT": None, # EMRAN used to be z_prior_probs
         }
 
     def compute_posterior_z(self, observations, initial_h):

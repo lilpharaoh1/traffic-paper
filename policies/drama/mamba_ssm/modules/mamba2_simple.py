@@ -21,8 +21,8 @@ try:
 except ImportError:
     RMSNormGated, LayerNorm = None, None
 
-from policies.drama.mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
-from policies.drama.mamba_ssm.ops.triton.ssd_combined import mamba_split_conv1d_scan_combined
+from policies.drama.mamba_ssm.ops.triton.ssd_combined_tf import mamba_chunk_scan_combined_fwd_tf
+from policies.drama.mamba_ssm.ops.triton.ssd_combined_tf import mamba_split_conv1d_scan_combined_tf
 
 
 class Mamba2Simple(tf.keras.layers.Layer): # EMRAN or potentiall tf.keras.Model instead
@@ -128,9 +128,11 @@ class Mamba2Simple(tf.keras.layers.Layer): # EMRAN or potentiall tf.keras.Model 
         self.D = tf.Variable(tf.ones(self.nheads), trainable=True)
         self.D._no_weight_decay = True
 
-        # Extra normalization layer right before output projection
-        assert RMSNormGated is not None
-        self.norm = RMSNormGated(self.d_inner, eps=1e-5, norm_before_gate=False, **factory_kwargs)
+        # EMRAN commenting out again and just using normal normalization layers (for now)
+        # # Extra normalization layer right before output projection
+        # assert RMSNormGated is not None
+        # self.norm = RMSNormGated(self.d_inner, eps=1e-5, norm_before_gate=False, **factory_kwargs)
+        self.norm = tf.keras.layers.LayerNormalization()
 
         self.out_proj = tf.keras.layers.Dense(
             units=self.d_model, 
@@ -139,34 +141,35 @@ class Mamba2Simple(tf.keras.layers.Layer): # EMRAN or potentiall tf.keras.Model 
             **factory_kwargs
         )
 
-    def forward(self, u, seq_idx=None):
+    def call(self, u, seq_idx=None):
         """
         u: (B, L, D)
         Returns: same shape as u
         """
         batch, seqlen, dim = u.shape
-
+        
+        print("u:", u)
         zxbcdt = self.in_proj(u)  # (B, L, d_in_proj)
+        print("zxbcdt:", zxbcdt)
         A = -tf.exp(self.A_log)  # (nheads) or (d_inner, d_state)
         initial_states=repeat(self.init_states, "... -> b ...", b=batch) if self.learnable_init_states else None
         dt_limit_kwargs = {} if self.dt_limit == (0.0, float("inf")) else dict(dt_limit=self.dt_limit)
 
         if self.use_mem_eff_path:
             # Fully fused path
-            out = mamba_split_conv1d_scan_combined(
+            out = mamba_split_conv1d_scan_combined_tf(
                 zxbcdt,
-                rearrange(self.conv1d.weight, "d 1 w -> d w"),
-                self.conv1d.bias,
+                self.conv1d,    # pass the Conv1D layer itself
+                getattr(self.conv1d, "bias", None) if getattr(self.conv1d, "use_bias", False) else None,    # bias arg is ignored when passing layer
                 self.dt_bias,
-                A,
-                D=self.D,
+                A, self.D,
                 chunk_size=self.chunk_size,
                 seq_idx=seq_idx,
                 activation=self.activation,
-                rmsnorm_weight=self.norm.weight,
-                rmsnorm_eps=self.norm.eps,
-                outproj_weight=self.out_proj.weight,
-                outproj_bias=self.out_proj.bias,
+                rmsnorm_weight=getattr(self.norm, "weight", None),
+                rmsnorm_eps=getattr(self.norm, "epsilon", 1e-5),
+                outproj_weight=getattr(self.out_proj, "kernel", None),
+                outproj_bias=getattr(self.out_proj, "bias", None),
                 headdim=self.headdim,
                 ngroups=self.ngroups,
                 norm_before_gate=False,
@@ -197,7 +200,7 @@ class Mamba2Simple(tf.keras.layers.Layer): # EMRAN or potentiall tf.keras.Model 
             # Split into 3 main branches: X, B, C
             # These correspond to V, K, Q respectively in the SSM/attention duality
             x, B, C = tf.split(xBC, [self.d_inner, self.ngroups * self.d_state, self.ngroups * self.d_state], axis=-1)
-            y = mamba_chunk_scan_combined(
+            y = mamba_chunk_scan_combined_fwd_tf(
                 rearrange(x, "b l (h p) -> b l h p", p=self.headdim),
                 dt,
                 A,

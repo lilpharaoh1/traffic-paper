@@ -53,7 +53,7 @@ class MLP(tf.keras.layers.Layer):
                 "It is recommended to use GELU activation when use_gate_mlp=True, "
                 "as suggested in the original paper."
             )
-    def forward(self, x):
+    def call(self, x):
         y = self.fc1(x)
         if self.use_gate_mlp:
             y, gate = y.chunk(2, dim=-1)
