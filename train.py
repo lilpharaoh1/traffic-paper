@@ -32,6 +32,12 @@ def parse_args(args):
 
     # ----optional input parameters----
     parser.add_argument(
+        "--use-gpu",
+        action="store_true",
+        help="Use this flag to enable GPU usage."
+    )
+
+    parser.add_argument(
         '--log-level', type=str, default='ERROR',
         help='Level setting for logging to track running status.'
     )
@@ -41,6 +47,7 @@ def parse_args(args):
 
 def main(args):
     args = parse_args(args)
+    
     logging.basicConfig(level=args.log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     logger = logging.getLogger(__name__)
     logger.info(f"DRL training with the following CLI args: {args}")
@@ -72,6 +79,12 @@ def main(args):
     policy_config.config_to_ray.update({"enable_worker_sync": False})
     policy_config.algo_config.update_from_dict(policy_config.config_to_ray)
 
+
+    # 4. set GPU support
+    if args.use_gpu: 
+        policy_config.algo_config.resources(num_gpus=1)                    # allocate one GPU to the trainer
+        policy_config.algo_config.resources(num_learner_workers=1,
+                                            num_gpus_per_learner_worker=1) # give each learner worker a GPU
 
     tune.run(
         config.get('ALG_CONFIG', 'alg_name'),
