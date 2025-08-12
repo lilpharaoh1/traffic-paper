@@ -27,12 +27,12 @@ def parse_args(args):
 
     # ----required input parameters----
     parser.add_argument(
-        '--exp_config', type=str, default='cotv_config.ini',
+        '--exp-config', type=str, default='cotv_config.ini',
         help='Name of the experiment configuration file, as located in exp_configs.')
 
     # ----optional input parameters----
     parser.add_argument(
-        '--log_level', type=str, default='ERROR',
+        '--log-level', type=str, default='ERROR',
         help='Level setting for logging to track running status.'
     )
 
