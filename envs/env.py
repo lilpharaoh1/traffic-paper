@@ -55,6 +55,7 @@ class BasicEnv(gym.Env):
         self.seed = sumo_config.get('seed', fallback='random')
         self.output_path = sumo_config.get('output_path', fallback=None)
         self.num_output = sumo_config.getint('num_output', fallback=10)
+        self.cast_obs = sumo_config.getboolean('cast_obs', fallback=True)
         self.warmup_steps = train_config.getint('warmup_steps', fallback=0)
         self.horizon = train_config.getint('horizon')
 

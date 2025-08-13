@@ -10,13 +10,13 @@ class CoTVEnv(BasicEnv):
 
     def __init__(self, scenario, sumo_config, control_config, train_config):
         super().__init__(scenario, sumo_config, control_config, train_config)
-
+        
         self.num_observed = control_config.getint('num_observed', fallback=1)
         self.speed_limit = control_config.getfloat("target_velocity", fallback=15)
         self.max_accel = control_config.getfloat('max_accel', fallback=3)
         self.max_decel = control_config.getfloat("max_decel", fallback=-3)
         self.max_decel_norm = 15  # emergence stop
-
+        
         # process net file to get network information
         self.mapping_inc, self.num_int_lane_max, self.mapping_out, self.num_out_lane_max = self.scenario.node_mapping()
         self.max_speed = None  # get from self.sumo
@@ -129,7 +129,9 @@ class CoTVEnv(BasicEnv):
             # EMRAN changed from dict {tl_id:observation}
             obs.extend(observation)            
 
-        obs = tf.cast(obs, tf.float32)
+
+        if self.cast_obs:
+            obs = tf.cast(obs, tf.float32)
         self.observation_info = obs
 
         return obs
@@ -143,7 +145,8 @@ class CoTVEnv(BasicEnv):
                                         num_vehicle_start_index + self.num_int_lane_max])
             out_traffic_sum = np.sum(obs[num_vehicle_start_index + self.num_int_lane_max:
                                          num_vehicle_start_index + self.num_int_lane_max + self.num_out_lane_max])
-            reward += in_traffic_sum - out_traffic_sum # EMRAN not sure if this will work but sure look
+            reward -= in_traffic_sum - out_traffic_sum # EMRAN not sure if this will work but sure look 
+                                                       # EMRAN not divided by capacity but cotv code must do it somewhere, I guess?
 
         return reward
 
