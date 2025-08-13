@@ -129,7 +129,7 @@ class CoTVEnv(BasicEnv):
             # EMRAN changed from dict {tl_id:observation}
             obs.extend(observation)            
 
-        obs = tf.cast(obs, tf.float64)
+        obs = tf.cast(obs, tf.float32)
         self.observation_info = obs
 
         return obs
