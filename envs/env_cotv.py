@@ -1,6 +1,9 @@
 from envs.env import BasicEnv, BasicMultiEnv
 import numpy as np
 from gymnasium.spaces import Box, Discrete, Dict, MultiDiscrete, Tuple
+from ray.rllib.utils.framework import try_import_tf
+
+_, tf, _ = try_import_tf()
 
 
 class CoTVEnv(BasicEnv):
@@ -126,6 +129,7 @@ class CoTVEnv(BasicEnv):
             # EMRAN changed from dict {tl_id:observation}
             obs.extend(observation)            
 
+        obs = tf.cast(obs, tf.float64)
         self.observation_info = obs
 
         return obs
