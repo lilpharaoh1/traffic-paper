@@ -82,8 +82,6 @@ def straight_through_gradient(logits, sample_mode="random_sample"):
     if sample_mode == "random_sample":
         sample = dist.sample()
         # Straight-through gradient: pass forward `sample`, but use gradient of `probs`
-        print("\n\n\n\n\n\nn\n\n\n\n\n\nn\n\n\n")
-        print("sample, dist, dist.probs:", sample, dist, dist.probs_parameter())
         sample = tf.cast(dist.sample(), dtype=probs.dtype)
         sample = tf.stop_gradient(sample - probs) + probs
 
@@ -349,15 +347,8 @@ class WorldModel(tf.keras.Model):
             is_first: The batch (B, T) of `is_first` flags.
         """
 
-        print("\n\n\n\n\n\n\n\n\n\n\n\n\ninspecting forward_train parameters")
-        print("actions:", actions.shape, actions)
-        print("is_first:", is_first.shape, is_first)
-        print("observations (before):", observations.shape, observations)
-
         if self.symlog_obs:
             observations = symlog(observations)
-
-        print("observations (after):", observations.shape, observations)
 
         # Compute bare encoder outs (not z; this is done later with involvement of the
         # sequence model and the h-states).
@@ -369,17 +360,13 @@ class WorldModel(tf.keras.Model):
         )
 
         embedding = self.encoder(tf.cast(observations, self._comp_dtype))
-        print("(before) embedding.shape:", embedding)
         embedding = tf.reshape(
             embedding, shape=tf.concat([[B, T], tf.shape(embedding)[1:]], axis=0)
         )
-        print("(after) embedding.shape:", embedding)
         post_logits = self.dist_head.forward_post(embedding)
         sample = straight_through_gradient(post_logits, sample_mode="random_sample")
-        print("sample.shape:", sample)
         flattened_sample = flatten_sample(sample)
-        print("flattened_sample.shape:", flattened_sample)
-
+        
         # decoding image
         obs_hat = self.decoder(flattened_sample)
 
@@ -462,9 +449,11 @@ class WorldModel(tf.keras.Model):
         # z_BxT = tf.reshape(z_t1_to_T, shape=[-1] + z_t1_to_T.shape.as_list()[2:])
 
         # dynamics model
-        print("\n\n\n\n\n\n\n\n\n\n\n\n\n flattended_sample.shape, actions.shape:", flattened_sample.shape, actions.shape)
         dist_feat = self.sequence_model(flattened_sample, actions)
         prior_logits = self.dist_head.forward_prior(dist_feat)
+
+        print("\n\n\ndist_feat:", dist_feat)
+        print("\n\n\nprior_logits:", prior_logits)
 
         # Compute (predicted) reward distributions.
         rewards, reward_logits = self.reward_predictor(dist_feat)

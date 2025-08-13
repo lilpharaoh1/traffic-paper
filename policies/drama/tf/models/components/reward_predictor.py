@@ -170,6 +170,9 @@ class RewardPredictor(tf.keras.Model):
                 observation input. [B, num_categoricals, num_classes].
         """
 
+        B, T, dim = x.shape
+        x = tf.reshape(x, [-1, dim])
+
         out = self.mlp(x)
         # Return a) mean reward OR b) a tuple: (mean reward, logits over the reward
         # buckets).

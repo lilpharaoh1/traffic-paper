@@ -267,8 +267,8 @@ class MixerModel(tf.keras.Model):
             if layer_norm_fn is None or rms_norm_fn is None:
                 raise ImportError("Failed to import Triton LayerNorm / RMSNorm kernels")
             else:
-                layer_norm = tf.keras.layers.LayerNormalization(epsilon=norm_epsilon)
-                norm_dropout = tf.keras.layers.Dropout(dropout_p)
+                self.layer_norm = tf.keras.layers.LayerNormalization(epsilon=norm_epsilon)
+                self.norm_dropout = tf.keras.layers.Dropout(dropout_p)
         else:
             self.dropout = tf.keras.layers.Dropout(dropout_p) # "Attention is all you need sec 5.4 dropout"
         self.dropout_p = dropout_p
@@ -320,27 +320,25 @@ class MixerModel(tf.keras.Model):
         }
 
     def call(self, samples, action, inference_params=None, **mixer_kwargs):
-        # action = tf.cast(tf.one_hot(tf.cast(action, tf.int64), depth=self.action_dim), tf.float32)
-        # print("\n\n\n\n\n\n\n\n\n\n\n\n samples.shape, action.shape:", samples.shape, action.shape)
         data = tf.concat([samples, action], axis=-1)
-        print("\n\n\n\n\n\n\n\n\n\n\n\n data.shape:", data.shape)
-        print("samples.shape, action.shape:", samples.shape, action.shape)
-        # hidden_states = self.stem(data)
         hidden_states = data
         for idx, block in enumerate(self.stem):
-            print(f"{idx}) Using layer {block} to process {hidden_states}")
+            print(f"{idx+1}/{len(self.stem)}) Using layer {block} to process {hidden_states}")
             hidden_states = block(data)
             
         residual = None
-        for block in self.blocks:
+        for idx, block in enumerate(self.blocks):
+            print(f"{idx+1}/{len(self.blocks)}) Using block {block} to process {hidden_states}")
             hidden_states, residual = block(
                 hidden_states, residual, inference_params=inference_params, **mixer_kwargs
             )
         if not self.fused_add_norm:
+            print("No fused_add_norm...")
             hidden_states = self.dropout(hidden_states)
             residual = (hidden_states + residual) if residual is not None else hidden_states
             hidden_states = self.norm_f(tf.cast(residual, self.norm_f.weight.dtype))
         else:
+            print("Yes fused_add_norm...")
             # EMRAN using LayerNormalization (for now)
             # Set prenorm=False here since we don't need the residual
             # hidden_states = layer_norm(
@@ -354,8 +352,8 @@ class MixerModel(tf.keras.Model):
             #     is_rms_norm=isinstance(self.norm_f, RMSNorm),
             #     dropout_p=self.dropout_p if self.training else 0.0
             # )
-            hidden_states = layer_norm(hidden_states)
-            hidden_state = norm_dropout(hidden_state)
+            hidden_states = self.layer_norm(hidden_states)
+            hidden_states = self.norm_dropout(hidden_states)
         return hidden_states
 
 

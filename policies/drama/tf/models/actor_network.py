@@ -59,9 +59,6 @@ class ActorNetwork(tf.keras.Model):
             np.nan, trainable=False, name="value_target_pct95"
         )
 
-        print("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n in ActorNetwork")
-        print("self.action_space:", self.action_space)
-
         # For discrete actions, use a single MLP that computes logits.
         if isinstance(self.action_space, Discrete):
             self.mlp = MLP(

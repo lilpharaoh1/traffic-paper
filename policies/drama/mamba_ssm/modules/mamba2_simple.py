@@ -148,9 +148,7 @@ class Mamba2Simple(tf.keras.layers.Layer): # EMRAN or potentiall tf.keras.Model 
         """
         batch, seqlen, dim = u.shape
         
-        print("u:", u)
         zxbcdt = self.in_proj(u)  # (B, L, d_in_proj)
-        print("zxbcdt:", zxbcdt)
         A = -tf.exp(self.A_log)  # (nheads) or (d_inner, d_state)
         initial_states=repeat(self.init_states, "... -> b ...", b=batch) if self.learnable_init_states else None
         dt_limit_kwargs = {} if self.dt_limit == (0.0, float("inf")) else dict(dt_limit=self.dt_limit)

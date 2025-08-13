@@ -31,7 +31,6 @@ class Block(tf.keras.layers.Layer):
         self.fused_add_norm = fused_add_norm
         self.norm = norm_cls(axis=-1)
         self.mixer = mixer_cls(dim)
-        print("MLP_CLS:", mlp_cls, not isinstance(mlp_cls, tf.keras.layers.Activation))
         if not isinstance(mlp_cls, tf.keras.layers.Activation):
             self.norm2 = norm_cls(axis=-1)
             self.mlp = mlp_cls(dim)
@@ -45,8 +44,6 @@ class Block(tf.keras.layers.Layer):
         else:
             self.dropout = tf.keras.layers.Dropout(dropout_p) # "Attention is all you need sec 5.4 dropout"
         self.dropout_p = dropout_p
-
-        print("CHECKING_MLP:", mlp_cls)
 
     def call(
             self, hidden_states: Tensor, residual: Optional[Tensor] = None, inference_params=None, training=False, **mixer_kwargs
