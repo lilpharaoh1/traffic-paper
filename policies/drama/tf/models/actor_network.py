@@ -85,23 +85,23 @@ class ActorNetwork(tf.keras.Model):
         else:
             raise ValueError(f"Invalid action space: {action_space}")
 
-        # Trace self.call.
-        dl_type = tf.keras.mixed_precision.global_policy().compute_dtype or tf.float32
-        self.call = tf.function(
-            input_signature=[
-                tf.TensorSpec(shape=[None, get_gru_units(model_size)], dtype=dl_type),
-                tf.TensorSpec(
-                    shape=[
-                        None,
-                        get_num_z_categoricals(model_size),
-                        get_num_z_classes(model_size),
-                    ],
-                    dtype=dl_type,
-                ),
-            ]
-        )(self.call)
+        # # Trace self.call.
+        # dl_type = tf.keras.mixed_precision.global_policy().compute_dtype or tf.float32
+        # self.call = tf.function(
+        #     input_signature=[
+        #         tf.TensorSpec(shape=[None, get_gru_units(model_size)], dtype=dl_type),
+        #         tf.TensorSpec(
+        #             shape=[
+        #                 None,
+        #                 get_num_z_categoricals(model_size),
+        #                 get_num_z_classes(model_size),
+        #             ],
+        #             dtype=dl_type,
+        #         ),
+        #     ]
+        # )(self.call)
 
-    def call(self, h, z):
+    def call(self, x):
         """Performs a forward pass through this policy network.
 
         Args:
@@ -110,23 +110,14 @@ class ActorNetwork(tf.keras.Model):
                 observation input. [B, num_categoricals, num_classes].
         """
         # Flatten last two dims of z.
-        assert len(z.shape) == 3
-        z_shape = tf.shape(z)
-        z = tf.reshape(z, shape=(z_shape[0], -1))
-        assert len(z.shape) == 2
-        out = tf.concat([h, z], axis=-1)
-        out.set_shape(
-            [
-                None,
-                (
-                    get_num_z_categoricals(self.model_size)
-                    * get_num_z_classes(self.model_size)
-                    + get_gru_units(self.model_size)
-                ),
-            ]
-        )
+        assert len(x.shape) == 3
+        x = tf.reshape(x, shape=(-1, tf.shape(x)[-1]))
+        assert len(x.shape) == 2
+
+        # EMRAN got rid of x.set_shape
+
         # Send h-cat-z through MLP.
-        action_logits = tf.cast(self.mlp(out), tf.float32)
+        action_logits = tf.cast(self.mlp(x), tf.float32)
 
         if isinstance(self.action_space, Discrete):
             action_probs = tf.nn.softmax(action_logits)
@@ -153,7 +144,7 @@ class ActorNetwork(tf.keras.Model):
 
         elif isinstance(self.action_space, Box):
             # Send h-cat-z through MLP to compute stddev logits for Normal dist
-            std_logits = tf.cast(self.std_mlp(out), tf.float32)
+            std_logits = tf.cast(self.std_mlp(x), tf.float32)
             # minstd, maxstd taken from [1] from configs.yaml
             minstd = 0.1
             maxstd = 1.0

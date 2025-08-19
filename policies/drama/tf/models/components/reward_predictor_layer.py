@@ -84,7 +84,6 @@ class RewardPredictorLayer(tf.keras.layers.Layer):
             probs, do `[FiniteDiscrete object].probs`.
         """
         # Compute the `num_buckets` weights.
-        print("\n\n\n\n\n\n\n\n\n\nreward inputs:", inputs)
         assert len(inputs.shape) == 2
         logits = tf.cast(self.reward_buckets_layer(inputs), tf.float32)
         # out=[B, `num_buckets`]

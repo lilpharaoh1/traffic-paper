@@ -7,7 +7,7 @@ https://arxiv.org/pdf/2301.04104v1.pdf
 D. Hafner, T. Lillicrap, M. Norouzi, J. Ba
 https://arxiv.org/pdf/2010.02193.pdf
 """
-from collections import defaultdict
+from collections import defaultdict, deque
 from functools import partial
 from typing import List, Tuple
 
@@ -242,18 +242,11 @@ class DramaEnvRunner(EnvRunner):
         """
         done_episodes_to_return = []
 
-        # Get initial states for all `batch_size_B` rows in the forward batch.
-        initial_states = tree.map_structure(
-            lambda s: np.repeat(s, self.num_envs, axis=0),
-            self.module.get_initial_state(),
-        )
-
         # Have to reset the env (on all vector sub-envs).
         if force_reset or self._needs_initial_reset:
             obs, _ = self.env.reset()
 
             self._episodes = [SingleAgentEpisode() for _ in range(self.num_envs)]
-            states = initial_states
             # Set is_first to True for all rows (all sub-envs just got reset).
             is_first = np.ones((self.num_envs,))
             self._needs_initial_reset = False
@@ -261,31 +254,32 @@ class DramaEnvRunner(EnvRunner):
             # Set initial obs and states in the episodes.
             for i in range(self.num_envs):
                 self._episodes[i].add_env_reset(observation=obs[i])
-                self._states[i] = {k: s[i] for k, s in states.items()}
         # Don't reset existing envs; continue in already started episodes.
         else:
             # Pick up stored observations and states from previous timesteps.
             obs = np.stack([eps.observations[-1] for eps in self._episodes])
-            # Compile the initial state for each batch row: If episode just started, use
-            # model's initial state, if not, use state stored last in
-            # SingleAgentEpisode.
-            states = {
-                k: np.stack(
-                    [
-                        initial_states[k][i]
-                        if self._states[i] is None
-                        else self._states[i][k]
-                        for i, eps in enumerate(self._episodes)
-                    ]
-                )
-                for k in initial_states.keys()
-            }
             # If a batch row is at the beginning of an episode, set its `is_first` flag
             # to 1.0, otherwise 0.0.
             is_first = np.zeros((self.num_envs,))
             for i, eps in enumerate(self._episodes):
                 if len(eps) == 0:
                     is_first[i] = 1.0
+
+        current_obs = obs
+        context_obs = deque(maxlen=16) # EMRAN hardcoded length for now 
+        context_obs.append(obs)
+        context_action = deque(maxlen=16) # EMRAN hardcoded length for now
+        context_action.append(self.env.action_space.sample()) 
+        states = {
+            "context_obs": tf.stack(list(context_obs), axis=0),
+            "context_action": tf.stack(list(context_action), axis=0)
+        }
+
+        # print("\n\n\n\n\n\n\n\n\n")
+        # print("current_obs:", current_obs)
+        # print("context_obs, context_action:", context_obs, context_action)
+        # print("states:", states)
+        # print("self._episodes:", self._episodes)
 
         # Loop through env for n timesteps.
         ts = 0
@@ -302,6 +296,7 @@ class DramaEnvRunner(EnvRunner):
                     Columns.OBS: tf.convert_to_tensor(obs),
                     "is_first": tf.convert_to_tensor(is_first),
                 }
+
                 # Explore or not.
                 if explore:
                     outs = self.module.forward_exploration(batch)
@@ -320,6 +315,13 @@ class DramaEnvRunner(EnvRunner):
             obs, rewards, terminateds, truncateds, infos = self.env.step(actions)
             ts += self.num_envs
 
+            context_obs.append(obs)
+            context_action.append(actions)
+            states = {
+                "context_obs": tf.stack(list(context_obs), axis=0),
+                "context_action": tf.stack(list(context_action), axis=0)
+            }
+
             for i in range(self.num_envs):
                 s = {k: s[i] for k, s in states.items()}
                 # The last entry in self.observations[i] is already the reset
@@ -337,8 +339,14 @@ class DramaEnvRunner(EnvRunner):
                     self._states[i] = s
                     # Reset h-states to the model's initial ones b/c we are starting a
                     # new episode.
-                    for k, v in self.module.get_initial_state().items():
-                        states[k][i] = v.numpy()
+                    context_obs = deque(maxlen=16) # EMRAN hardcoded length for now 
+                    context_obs.append(self.env.reset())
+                    context_action = deque(maxlen=16) # EMRAN hardcoded length for now
+                    context_action.append(self.env.action_space.sample()) 
+                    states = {
+                        "context_obs": tf.stack(list(context_obs), axis=0),
+                        "context_action": tf.stack(list(context_action), axis=0)
+                    }
                     is_first[i] = True
                     done_episodes_to_return.append(self._episodes[i])
                     # Create a new episode object.
@@ -352,6 +360,9 @@ class DramaEnvRunner(EnvRunner):
                     is_first[i] = False
 
                 self._states[i] = s
+            print("after add_env_step")
+            print("ts, num_timesteps:", ts, num_timesteps)
+            print("--------------------------")
 
         # Return done episodes ...
         self._done_episodes_for_metrics.extend(done_episodes_to_return)

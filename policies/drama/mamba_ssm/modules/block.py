@@ -31,6 +31,7 @@ class Block(tf.keras.layers.Layer):
         self.fused_add_norm = fused_add_norm
         self.norm = norm_cls(axis=-1)
         self.mixer = mixer_cls(dim)
+        print("mlp_cls test:", mlp_cls, isinstance(mlp_cls, tf.keras.layers.Activation))
         if not isinstance(mlp_cls, tf.keras.layers.Activation):
             self.norm2 = norm_cls(axis=-1)
             self.mlp = mlp_cls(dim)

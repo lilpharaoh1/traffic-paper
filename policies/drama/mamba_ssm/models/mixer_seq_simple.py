@@ -250,7 +250,7 @@ class MixerModel(tf.keras.Model):
 
         self.stem = [# tf.keras.Sequential([
             tf.keras.layers.Dense(units=get_model_units(model_size), use_bias=True, kernel_initializer='glorot_uniform', **factory_kwargs),
-            tf.keras.layers.LayerNormalization(epsilon=norm_epsilon),
+            tf.keras.layers.LayerNormalization(epsilon=norm_epsilon, axis=-1),
             # RMSNorm(get_model_units(model_size), epsilon=norm_epsilon, **factory_kwargs), # EMRAN replaced RMSNorm with LayerNormalization
             tf.keras.layers.Activation('swish'),
             # nn.Linear(stoch_dim+action_dim, d_model, bias=True, **factory_kwargs),
@@ -267,7 +267,7 @@ class MixerModel(tf.keras.Model):
             if layer_norm_fn is None or rms_norm_fn is None:
                 raise ImportError("Failed to import Triton LayerNorm / RMSNorm kernels")
             else:
-                self.layer_norm = tf.keras.layers.LayerNormalization(epsilon=norm_epsilon)
+                self.layer_norm = tf.keras.layers.LayerNormalization(epsilon=norm_epsilon, axis=-1)
                 self.norm_dropout = tf.keras.layers.Dropout(dropout_p)
         else:
             self.dropout = tf.keras.layers.Dropout(dropout_p) # "Attention is all you need sec 5.4 dropout"

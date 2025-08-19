@@ -219,6 +219,7 @@ class WorldModel(tf.keras.Model):
             trainable=True,
             name="initial_h",
         )
+        
         # The actual sequence model containing the GRU layer.
         # self.sequence_model = SequenceModel(
         #     model_size=self.model_size,
@@ -295,28 +296,58 @@ class WorldModel(tf.keras.Model):
         Returns:
             The next deterministic h-state (h(t+1)) as predicted by the sequence model.
         """
-        observations = tf.cast(observations, self._comp_dtype)
+        # observations = tf.cast(observations, self._comp_dtype)
 
-        initial_states = tree.map_structure(
-            lambda s: tf.repeat(s, tf.shape(observations)[0], axis=0),
-            self.get_initial_state(),
+        # initial_states = tree.map_structure(
+        #     lambda s: tf.repeat(s, tf.shape(observations)[0], axis=0),
+        #     self.get_initial_state(),
+        # )
+
+        # # If first, mask it with initial state/actions.
+        # previous_h = self._mask(previous_states["h"], 1.0 - is_first)  # zero out
+        # previous_h = previous_h + self._mask(initial_states["h"], is_first)  # add init
+
+        # previous_z = self._mask(previous_states["z"], 1.0 - is_first)  # zero out
+        # previous_z = previous_z + self._mask(initial_states["z"], is_first)  # add init
+
+        # # Zero out actions (no special learnt initial state).
+        # previous_a = self._mask(previous_states["a"], 1.0 - is_first)
+
+        # # Compute new states.
+        # h = self.sequence_model(a=previous_a, h=previous_h, z=previous_z)
+        # z = self.compute_posterior_z(observations=observations, initial_h=h)
+
+        print("\n\n\n\n\n\n\nprevious_states:", previous_states)
+
+        B, T, obs_dim = previous_states['context_obs'].shape
+        B, T, action_dim = previous_states['context_obs'].shape
+
+        print("AFTER) observation:", tf.reshape(previous_states['context_obs'], [-1, obs_dim]))
+        embedding = self.encoder(
+            tf.cast(tf.reshape(previous_states['context_obs'], [-1, obs_dim]), self._comp_dtype)
         )
+        embedding = tf.reshape(
+            embedding, shape=tf.concat([[B, T], tf.shape(embedding)[1:]], axis=0)
+        )
+        print("AFTER) embedding:", embedding)
+        post_logits = self.dist_head.forward_post(embedding)
+        sample = straight_through_gradient(post_logits, sample_mode="random_sample")
+        flattened_sample = flatten_sample(sample)
 
-        # If first, mask it with initial state/actions.
-        previous_h = self._mask(previous_states["h"], 1.0 - is_first)  # zero out
-        previous_h = previous_h + self._mask(initial_states["h"], is_first)  # add init
+        print("after embedding")
 
-        previous_z = self._mask(previous_states["z"], 1.0 - is_first)  # zero out
-        previous_z = previous_z + self._mask(initial_states["z"], is_first)  # add init
+        dist_feat = self.sequence_model(flattened_sample, previous_states['context_action'])
+        print("after sequence model")
+        last_dist_feat = dist_feat[:, -1:]
+        print("last_dist_feat:", last_dist_feat)
+        prior_logits = self.dist_head.forward_prior(last_dist_feat)
+        prior_sample = straight_through_gradient(prior_logits, sample_mode="random_sample")
+        flattened_prior = flatten_sample(prior_sample)
+        
 
-        # Zero out actions (no special learnt initial state).
-        previous_a = self._mask(previous_states["a"], 1.0 - is_first)
+        print("returning dist_feat and prior logits")
 
-        # Compute new states.
-        h = self.sequence_model(a=previous_a, h=previous_h, z=previous_z)
-        z = self.compute_posterior_z(observations=observations, initial_h=h)
-
-        return {"h": h, "z": z}
+        return dist_feat, flattened_prior
 
     def forward_train(self, observations, actions, is_first):
         """Performs a forward step for training.
@@ -358,128 +389,66 @@ class WorldModel(tf.keras.Model):
         observations = tf.reshape(
             observations, shape=tf.concat([[-1], shape[2:]], axis=0)
         )
-
+        print("BEFORE) observation:", observations)
         embedding = self.encoder(tf.cast(observations, self._comp_dtype))
         embedding = tf.reshape(
             embedding, shape=tf.concat([[B, T], tf.shape(embedding)[1:]], axis=0)
         )
+        print("BEFORE) embedding:", embedding)
         post_logits = self.dist_head.forward_post(embedding)
         sample = straight_through_gradient(post_logits, sample_mode="random_sample")
         flattened_sample = flatten_sample(sample)
         
         # decoding image
         obs_hat = self.decoder(flattened_sample)
-
-        # encoder_out = self.encoder(tf.cast(observations, self._comp_dtype))
-        # # Unfold time dimension.
-        # encoder_out = tf.reshape(
-        #     encoder_out, shape=tf.concat([[B, T], tf.shape(encoder_out)[1:]], axis=0)
-        # )
-        # # Make time major for faster upcoming loop.
-        # encoder_out = tf.transpose(
-        #     encoder_out, perm=[1, 0] + list(range(2, len(encoder_out.shape.as_list())))
-        # )
-        # # encoder_out=[T, B, ...]
-
-        # # Make actions and `is_first` time-major.
-        # actions = tf.transpose(
-        #     tf.cast(actions, self._comp_dtype),
-        #     perm=[1, 0] + list(range(2, tf.shape(actions).shape.as_list()[0])),
-        # )
-        # is_first = tf.transpose(tf.cast(is_first, self._comp_dtype), perm=[1, 0])
-
-        # # Loop through the T-axis of our samples and perform one computation step at
-        # # a time. This is necessary because the sequence model's output (h(t+1)) depends
-        # # on the current z(t), but z(t) depends on the current sequence model's output
-        # # h(t).
-        # z_t0_to_T = [initial_states["z"]]
-        # z_posterior_probs = []
-        # z_prior_probs = []
-        # h_t0_to_T = [initial_states["h"]]
-        # for t in range(self.batch_length_T):
-        #     # If first, mask it with initial state/actions.
-        #     h_tm1 = self._mask(h_t0_to_T[-1], 1.0 - is_first[t])  # zero out
-        #     h_tm1 = h_tm1 + self._mask(initial_states["h"], is_first[t])  # add init
-
-        #     z_tm1 = self._mask(z_t0_to_T[-1], 1.0 - is_first[t])  # zero out
-        #     z_tm1 = z_tm1 + self._mask(initial_states["z"], is_first[t])  # add init
-
-        #     # Zero out actions (no special learnt initial state).
-        #     a_tm1 = self._mask(actions[t - 1], 1.0 - is_first[t])
-
-        #     # Perform one RSSM (sequence model) step to get the current h.
-        #     h_t = self.sequence_model(a=a_tm1, h=h_tm1, z=z_tm1)
-        #     h_t0_to_T.append(h_t)
-
-        #     posterior_mlp_input = tf.concat([encoder_out[t], h_t], axis=-1)
-        #     repr_input = self.posterior_mlp(posterior_mlp_input)
-        #     # Draw one z-sample (z(t)) and also get the z-distribution for dynamics and
-        #     # representation loss computations.
-        #     z_t, z_probs = self.posterior_representation_layer(repr_input)
-        #     # z_t=[B, num_categoricals, num_classes]
-        #     z_posterior_probs.append(z_probs)
-        #     z_t0_to_T.append(z_t)
-
-        #     # Compute the predicted z_t (z^) using the dynamics model.
-        #     _, z_probs = self.dynamics_predictor(h_t)
-        #     z_prior_probs.append(z_probs)
-
-        # # Stack at time dimension to yield: [B, T, ...].
-        # h_t1_to_T = tf.stack(h_t0_to_T[1:], axis=1)
-        # z_t1_to_T = tf.stack(z_t0_to_T[1:], axis=1)
-
-        # # Fold time axis to retrieve the final (loss ready) Independent distribution
-        # # (over `num_categoricals` Categoricals).
-        # z_posterior_probs = tf.stack(z_posterior_probs, axis=1)
-        # z_posterior_probs = tf.reshape(
-        #     z_posterior_probs,
-        #     shape=[-1] + z_posterior_probs.shape.as_list()[2:],
-        # )
-        # # Fold time axis to retrieve the final (loss ready) Independent distribution
-        # # (over `num_categoricals` Categoricals).
-        # z_prior_probs = tf.stack(z_prior_probs, axis=1)
-        # z_prior_probs = tf.reshape(
-        #     z_prior_probs,
-        #     shape=[-1] + z_prior_probs.shape.as_list()[2:],
-        # )
-
-        # # Fold time dimension for parallelization of all dependent predictions:
-        # # observations (reproduction via decoder), rewards, continues.
-        # h_BxT = tf.reshape(h_t1_to_T, shape=[-1] + h_t1_to_T.shape.as_list()[2:])
-        # z_BxT = tf.reshape(z_t1_to_T, shape=[-1] + z_t1_to_T.shape.as_list()[2:])
+        obs_hat_BxT = tf.reshape(
+            obs_hat, shape=tf.concat([[-1], shape[2:]], axis=0)
+        )
 
         # dynamics model
         dist_feat = self.sequence_model(flattened_sample, actions)
         prior_logits = self.dist_head.forward_prior(dist_feat)
+        prior_sample = straight_through_gradient(prior_logits, sample_mode="random_sample")
+        flattened_prior = flatten_sample(prior_sample)
 
-        print("\n\n\ndist_feat:", dist_feat)
-        print("\n\n\nprior_logits:", prior_logits)
+        dist_feat_BxT = tf.reshape(
+            dist_feat, shape=tf.concat([[-1], tf.shape(dist_feat)[2:]], axis=0)
+        )
 
         # Compute (predicted) reward distributions.
-        rewards, reward_logits = self.reward_predictor(dist_feat)
+        rewards, reward_logits = self.reward_predictor(dist_feat_BxT)
 
         # Compute (predicted) continue distributions.
-        continues, continue_distribution = self.continue_predictor(dist_feat)
+        continues, continue_distribution = self.continue_predictor(dist_feat_BxT)
+ 
+        # print("observations, obs_hat_BxT:", observations, obs_hat_BxT)
+        # print("continues, continue_distribution:", continues, continue_distribution)
+        # exit()
 
         # Return outputs for loss computation.
         # Note that all shapes are [BxT, ...] (time axis already folded).
         return {
             # Obs.
             "sampled_obs_symlog_BxT": observations,
-            "obs_distribution_means_BxT": None, # EMRAN used to be obs_distribution_means = tf.cast(self.decoder(h=h_BxT, z=z_BxT), tf.float32)
+            "obs_distribution_means_BxT": obs_hat_BxT, # EMRAN may need to cast tf.cast(obs_hat, tf.float32),
             # Rewards.
             "reward_logits_BxT": reward_logits,
             "rewards_BxT": rewards,
             # Continues.
             "continue_distribution_BxT": continue_distribution,
             "continues_BxT": continues,
+            # Hidden states 
+            "dist_feat": dist_feat,
+            "flattened_prior": flattened_prior,
+
+            # EMRAN below is DreamerV3 stuff not used anymore
             # Deterministic, continuous h-states (t1 to T).
-            "h_states_BxT": None, # EMRAN used to be h_BxT 
-            # Sampled, discrete posterior z-states and their probs (t1 to T).
-            "z_posterior_states_BxT": None, # EMRAN used to be z_BxT
-            "z_posterior_probs_BxT": None, # EMRAN used to be z_posterior_probs
-            # Probs of the prior z-states (t1 to T).
-            "z_prior_probs_BxT": None, # EMRAN used to be z_prior_probs
+            # "h_states_BxT": None, # EMRAN used to be h_BxT 
+            # # Sampled, discrete posterior z-states and their probs (t1 to T).
+            # "z_posterior_states_BxT": None, # EMRAN used to be z_BxT
+            # "z_posterior_probs_BxT": None, # EMRAN used to be z_posterior_probs
+            # # Probs of the prior z-states (t1 to T).
+            # "z_prior_probs_BxT": None, # EMRAN used to be z_prior_probs
         }
 
     def compute_posterior_z(self, observations, initial_h):

@@ -10,24 +10,26 @@ from ray.rllib.algorithms.algorithm import Algorithm
 
 def drama_config(train_configs, env_name, model_configs):
     return {
+        # EMRAN hardcoded for now
         "env": env_name,
         "log_level": train_configs.get('log_level'),
-        "batch_size_B": 16, 
-        "batch_length_T": 64, 
+        "batch_size_B": 4, # 16, 
+        "batch_length_T": 4, # 64, 
         "gamma": 0.999,
         "model_size": "D",
-        "training_ratio": 1024,
+        "training_ratio": 32, # 1024,
     }
 
 def dreamerv3_config(train_configs, env_name, model_configs):
     return {
+        # EMRAN hardcoded for now
         "env": env_name,
         "log_level": train_configs.get('log_level'),
-        "batch_size_B": 16, 
-        "batch_length_T": 64, 
+        "batch_size_B": 4, # 16, 
+        "batch_length_T": 4, # 64, 
         "gamma": 0.999,
         "model_size": "XS",
-        "training_ratio": 1024,
+        "training_ratio": 64, # 1024,
     }
 
 def ppo_config(train_configs, env_name, model_configs):

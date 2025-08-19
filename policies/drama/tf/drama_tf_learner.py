@@ -185,17 +185,25 @@ class DramaTfLearner(DramaLearner, TfLearner):
             fwd_out=fwd_out,
         )
 
+        print("CHECKPOINT) OUTSIDE OF _compute_world_model_prediction_losses")
+        print(*"few_out:", fwd_out)
+
         (
             L_dyn_B_T,
             L_rep_B_T,
         ) = self._compute_world_model_dynamics_and_representation_loss(
             config=config, fwd_out=fwd_out
         )
+
+        print("CHECKPOINT) END OF _compute_world_model_dynamics_and_representation_loss")
+
         L_dyn = tf.reduce_mean(L_dyn_B_T)
         L_rep = tf.reduce_mean(L_rep_B_T)
         # Make sure values for L_rep and L_dyn are the same (they only differ in their
         # gradients).
         tf.assert_equal(L_dyn, L_rep)
+
+        print("CHECKPOINT) END OF tf.assert_equal")
 
         # Compute the actual total loss using fixed weights described in [1] eq. 4.
         L_world_model_total_B_T = (
@@ -235,6 +243,9 @@ class DramaTfLearner(DramaLearner, TfLearner):
                 "WORLD_MODEL_L_total": L_world_model_total,
             },
         )
+
+        print("CHECKPOINT) END OF register_metrics1")
+        
         if config.report_individual_batch_item_stats:
             self.register_metrics(
                 module_id=module_id,
@@ -250,6 +261,8 @@ class DramaTfLearner(DramaLearner, TfLearner):
                     "WORLD_MODEL_L_total_B_T": L_world_model_total_B_T,
                 },
             )
+
+        print("CHECKPOINT) END OF register_metrics2")
 
         # Dream trajectories starting in all internal states (h + z_posterior) that were
         # computed during world model training.
@@ -281,6 +294,8 @@ class DramaTfLearner(DramaLearner, TfLearner):
                 },
             )
 
+        print("CHECKPOINT) END OF register_metrics3")
+
         value_targets_t0_to_Hm1_BxT = self._compute_value_targets(
             config=config,
             # Learn critic in symlog'd space.
@@ -293,6 +308,9 @@ class DramaTfLearner(DramaLearner, TfLearner):
             continues_t0_to_H_BxT=dream_data["continues_dreamed_t0_to_H_BxT"],
             value_predictions_t0_to_H_BxT=dream_data["values_dreamed_t0_to_H_BxT"],
         )
+
+        print("CHECKPOINT) END OF _compute_value_targets")
+
         self.register_metric(
             module_id, "VALUE_TARGETS_H_BxT", value_targets_t0_to_Hm1_BxT
         )
@@ -303,6 +321,9 @@ class DramaTfLearner(DramaLearner, TfLearner):
             dream_data=dream_data,
             value_targets_t0_to_Hm1_BxT=value_targets_t0_to_Hm1_BxT,
         )
+
+        print("CHECKPOINT) END OF _compute_critic_loss")
+
         if config.train_actor:
             ACTOR_L_total = self._compute_actor_loss(
                 module_id=module_id,
@@ -312,6 +333,8 @@ class DramaTfLearner(DramaLearner, TfLearner):
             )
         else:
             ACTOR_L_total = 0.0
+
+        print("CHECKPOINT) END OF _compute_actor_loss")
 
         # Return the total loss as a sum of all individual losses.
         return L_world_model_total + CRITIC_L_total + ACTOR_L_total
@@ -414,6 +437,8 @@ class DramaTfLearner(DramaLearner, TfLearner):
         L_pred_B_T = decoder_loss_B_T + reward_loss_two_hot_B_T + continue_loss_B_T
         L_pred = tf.reduce_mean(L_pred_B_T)
 
+        print("CHECKPOINT) END OF _compute_world_model_prediction_losses")
+
         return {
             "L_decoder_B_T": decoder_loss_B_T,
             "L_decoder": L_decoder,
@@ -443,11 +468,14 @@ class DramaTfLearner(DramaLearner, TfLearner):
 
         # Actual distribution over stochastic internal states (z) produced by the
         # encoder.
+        print("CHECKPOINT) BEFORE")
         z_posterior_probs_BxT = fwd_out["z_posterior_probs_BxT"]
         z_posterior_distr_BxT = tfp.distributions.Independent(
             tfp.distributions.OneHotCategorical(probs=z_posterior_probs_BxT),
             reinterpreted_batch_ndims=1,
         )
+
+        print("CHECKPOINT) AFTER")
 
         # Actual distribution over stochastic internal states (z) produced by the
         # dynamics network.

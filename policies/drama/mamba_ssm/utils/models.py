@@ -20,8 +20,8 @@ def get_n_layer(model_size, override=None):
 
     assert model_size in _ALLOWED_MODEL_DIMS
     units = {
-        "XS": 8, # EMRAN used to be 32 
-        "D": 16, # EMRAN used to be 64
+        "XS": 2, # EMRAN used to be 32 
+        "D": 4, # EMRAN used to be 64
     }
     return units[model_size]
 

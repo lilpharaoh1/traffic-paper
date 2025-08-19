@@ -83,28 +83,28 @@ class DramaModel(tf.keras.Model):
                 intrinsic_rewards_scale=intrinsic_rewards_scale,
             )
 
-        self.dream_trajectory = tf.function(
-            input_signature=[
-                {
-                    "h": tf.TensorSpec(
-                        shape=[
-                            None,
-                            get_gru_units(self.model_size),
-                        ],
-                        dtype=self._comp_dtype,
-                    ),
-                    "z": tf.TensorSpec(
-                        shape=[
-                            None,
-                            get_num_z_categoricals(self.model_size),
-                            get_num_z_classes(self.model_size),
-                        ],
-                        dtype=self._comp_dtype,
-                    ),
-                },
-                tf.TensorSpec(shape=[None], dtype=tf.bool),
-            ]
-        )(self.dream_trajectory)
+        # self.dream_trajectory = tf.function(
+        #     input_signature=[
+        #         {
+        #             "h": tf.TensorSpec(
+        #                 shape=[
+        #                     None,
+        #                     get_gru_units(self.model_size),
+        #                 ],
+        #                 dtype=self._comp_dtype,
+        #             ),
+        #             "z": tf.TensorSpec(
+        #                 shape=[
+        #                     None,
+        #                     get_num_z_categoricals(self.model_size),
+        #                     get_num_z_classes(self.model_size),
+        #                 ],
+        #                 dtype=self._comp_dtype,
+        #             ),
+        #         },
+        #         tf.TensorSpec(shape=[None], dtype=tf.bool),
+        #     ]
+        # )(self.dream_trajectory)
 
     def call(
         self,
@@ -129,30 +129,37 @@ class DramaModel(tf.keras.Model):
             actions,
             is_first,
         )
+
         # Actor.
         _, distr_params = self.actor(
-            h=results["h_states_BxT"],
-            z=results["z_posterior_states_BxT"],
-        )
+            x=tf.concat([results['dist_feat'], results['flattened_prior']], axis=-1),
+            )
+        
         # Critic.
+        ## Initialise ema
+        _, _ = self.critic(
+            x=tf.concat([results['dist_feat'], results['flattened_prior']], axis=-1),
+            use_ema=tf.convert_to_tensor(True),
+        )
+        ## Initialise core
         values, _ = self.critic(
-            h=results["h_states_BxT"],
-            z=results["z_posterior_states_BxT"],
+            x=tf.concat([results['dist_feat'], results['flattened_prior']], axis=-1),
             use_ema=tf.convert_to_tensor(False),
         )
 
-        # Dream pipeline.
-        dream_data = self.dream_trajectory(
-            start_states={
-                "h": results["h_states_BxT"],
-                "z": results["z_posterior_states_BxT"],
-            },
-            start_is_terminated=start_is_terminated_BxT,
-        )
+        # EMRAN we might need this, but not now
+        # # Dream pipeline.
+        # dream_data = self.dream_trajectory(
+        #     start_states={
+        #         "h": results["h_states_BxT"],
+        #         "z": results["z_posterior_states_BxT"],
+        #     },
+        #     start_is_terminated=start_is_terminated_BxT,
+        # )
 
         return {
             "world_model_fwd": results,
-            "dream_data": dream_data,
+            # "dream_data": dream_data,
             "actions": actions,
             "values": values,
         }
@@ -173,19 +180,21 @@ class DramaModel(tf.keras.Model):
                 has been started at the current timestep (meaning `observations` is the
                 reset observation from the environment).
         """
+        print("in forward_inference) obs, prev_state:", observations, previous_states)
         # Perform one step in the world model (starting from `previous_state` and
         # using the observations to yield a current (posterior) state).
-        states = self.world_model.forward_inference(
+        dist_feat, flattened_prior = self.world_model.forward_inference(
             observations=observations,
             previous_states=previous_states,
             is_first=is_first,
         )
+        print("dist_feat, flattened_prior:", dist_feat, flattened_prior)
         # Compute action using our actor network and the current states.
-        _, distr_params = self.actor(h=states["h"], z=states["z"])
+        _, distr_params = self.actor(tf.concat([dist_feat, flattened_prior], axis=-1))
         # Use the mode of the distribution (Discrete=argmax, Normal=mean).
         distr = self.actor.get_action_dist_object(distr_params)
         actions = distr.mode()
-        return actions, {"h": states["h"], "z": states["z"], "a": actions}
+        return actions, {"dist_feat": dist_feat, "flattened_prior": flattened_prior, "a": actions} # EMRAN used to be {"h": states["h"], "z": states["z"], "a": actions}
 
     @tf.function
     def forward_exploration(
@@ -205,16 +214,18 @@ class DramaModel(tf.keras.Model):
                 has been started at the current timestep (meaning `observations` is the
                 reset observation from the environment).
         """
+        print("in forward_exploration) obs, prev_state:", observations, previous_states)
         # Perform one step in the world model (starting from `previous_state` and
         # using the observations to yield a current (posterior) state).
-        states = self.world_model.forward_inference(
+        dist_feat, flattened_prior = self.world_model.forward_inference(
             observations=observations,
             previous_states=previous_states,
             is_first=is_first,
         )
         # Compute action using our actor network and the current states.
-        actions, _ = self.actor(h=states["h"], z=states["z"])
-        return actions, {"h": states["h"], "z": states["z"], "a": actions}
+        print("in forward_exploration) dist_feat, flattened_prior:", dist_feat, flattened_prior)
+        actions, _ = self.actor(tf.concat([dist_feat, flattened_prior], axis=-1))
+        return actions, {"dist_feat": dist_feat, "flattened_prior": flattened_prior, "a": actions} # EMRAN used to be {"h": states["h"], "z": states["z"], "a": actions}
 
     def forward_train(self, observations, actions, is_first):
         """Performs a training forward pass given observations and actions.

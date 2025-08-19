@@ -145,10 +145,13 @@ class DramaRLModule(RLModule, abc.ABC):
             "rewards_BxT",
             "continue_distribution_BxT",
             "continues_BxT",
-            # Sampled, discrete posterior z-states (t1 to T).
-            "z_posterior_states_BxT",
-            "z_posterior_probs_BxT",
-            "z_prior_probs_BxT",
-            # Deterministic, continuous h-states (t1 to T).
-            "h_states_BxT",
+            "dist_feat",
+            "flattened_prior",
+            # EMRAN don't know if this will fix SpecError
+            # # Sampled, discrete posterior z-states (t1 to T).
+            # "z_posterior_states_BxT",
+            # "z_posterior_probs_BxT",
+            # "z_prior_probs_BxT",
+            # # Deterministic, continuous h-states (t1 to T).
+            # "h_states_BxT",
         ]

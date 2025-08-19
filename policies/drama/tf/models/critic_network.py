@@ -102,24 +102,24 @@ class CriticNetwork(tf.keras.Model):
             trainable=False,
         )
 
-        # Trace self.call.
-        dl_type = tf.keras.mixed_precision.global_policy().compute_dtype or tf.float32
-        self.call = tf.function(
-            input_signature=[
-                tf.TensorSpec(shape=[None, get_gru_units(model_size)], dtype=dl_type),
-                tf.TensorSpec(
-                    shape=[
-                        None,
-                        get_num_z_categoricals(model_size),
-                        get_num_z_classes(model_size),
-                    ],
-                    dtype=dl_type,
-                ),
-                tf.TensorSpec(shape=[], dtype=tf.bool),
-            ]
-        )(self.call)
+        # # Trace self.call.
+        # dl_type = tf.keras.mixed_precision.global_policy().compute_dtype or tf.float32
+        # self.call = tf.function(
+        #     input_signature=[
+        #         tf.TensorSpec(shape=[None, get_gru_units(model_size)], dtype=dl_type),
+        #         tf.TensorSpec(
+        #             shape=[
+        #                 None,
+        #                 get_num_z_categoricals(model_size),
+        #                 get_num_z_classes(model_size),
+        #             ],
+        #             dtype=dl_type,
+        #         ),
+        #         tf.TensorSpec(shape=[], dtype=tf.bool),
+        #     ]
+        # )(self.call)
 
-    def call(self, h, z, use_ema):
+    def call(self, x, use_ema):
         """Performs a forward pass through the critic network.
 
         Args:
@@ -130,42 +130,45 @@ class CriticNetwork(tf.keras.Model):
                 critic to perform this computation.
         """
         # Flatten last two dims of z.
-        assert len(z.shape) == 3
-        z_shape = tf.shape(z)
-        z = tf.reshape(z, shape=(z_shape[0], -1))
-        assert len(z.shape) == 2
-        out = tf.concat([h, z], axis=-1)
-        out.set_shape(
-            [
-                None,
-                (
-                    get_num_z_categoricals(self.model_size)
-                    * get_num_z_classes(self.model_size)
-                    + get_gru_units(self.model_size)
-                ),
-            ]
-        )
+        assert len(x.shape) == 3
+        x = tf.reshape(x, shape=(-1, tf.shape(x)[-1]))
+        assert len(x.shape) == 2
+
+        # EMRAN got rid of x.set_shape
 
         if not use_ema:
             # Send h-cat-z through MLP.
-            out = self.mlp(out)
+            out = self.mlp(x)
             # Return expected return OR (expected return, probs of bucket values).
             return self.return_layer(out)
         else:
-            out = self.mlp_ema(out)
+            out = self.mlp_ema(x)
             return self.return_layer_ema(out)
 
-    def init_ema(self) -> None:
-        """Initializes the EMA-copy of the critic from the critic's weights.
+    # def init_ema(self) -> None:
+    #     """Initializes the EMA-copy of the critic from the critic's weights.
 
-        After calling this method, the two networks have identical weights.
-        """
-        vars = self.mlp.trainable_variables + self.return_layer.trainable_variables
+    #     After calling this method, the two networks have identical weights.
+    #     """
+    #     vars = self.mlp.trainable_variables + self.return_layer.trainable_variables
+    #     vars_ema = self.mlp_ema.variables + self.return_layer_ema.variables
+    #     assert len(vars) == len(vars_ema) and len(vars) > 0
+    #     for var, var_ema in zip(vars, vars_ema):
+    #         assert var is not var_ema
+    #         var_ema.assign(var)
+
+    def init_ema(self) -> None:
+        """Initializes the EMA copy of the critic from the critic's weights."""
+        # Collect all variables (trainable + non-trainable) from both networks
+        vars_src = self.mlp.variables + self.return_layer.variables
         vars_ema = self.mlp_ema.variables + self.return_layer_ema.variables
-        assert len(vars) == len(vars_ema) and len(vars) > 0
-        for var, var_ema in zip(vars, vars_ema):
+
+        assert len(vars_src) == len(vars_ema) and len(vars_src) > 0
+
+        for var, var_ema in zip(vars_src, vars_ema):
             assert var is not var_ema
-            var_ema.assign(var)
+            var_ema.assign(var.read_value())  # read_value() ensures a Tensor copy
+
 
     def update_ema(self) -> None:
         """Updates the EMA-copy of the critic according to the update formula:
@@ -176,4 +179,4 @@ class CriticNetwork(tf.keras.Model):
         vars_ema = self.mlp_ema.variables + self.return_layer_ema.variables
         assert len(vars) == len(vars_ema) and len(vars) > 0
         for var, var_ema in zip(vars, vars_ema):
-            var_ema.assign(self.ema_decay * var_ema + (1.0 - self.ema_decay) * var)
+            var_ema.assign(self.ema_decay * var_ema.read_value() + (1.0 - self.ema_decay) * var.read_value())
