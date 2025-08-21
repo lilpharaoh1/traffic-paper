@@ -80,6 +80,7 @@ class CriticNetwork(tf.keras.Model):
         self.mlp = MLP(
             model_size=self.model_size,
             output_layer_size=None,
+            name="critic"
         )
         self.return_layer = RewardPredictorLayer(
             num_buckets=num_buckets,
@@ -94,6 +95,7 @@ class CriticNetwork(tf.keras.Model):
             model_size=self.model_size,
             output_layer_size=None,
             trainable=False,
+            name="critic_ema"
         )
         self.return_layer_ema = RewardPredictorLayer(
             num_buckets=num_buckets,

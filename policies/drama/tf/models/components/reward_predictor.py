@@ -154,6 +154,7 @@ class RewardPredictor(tf.keras.Model):
         self.mlp = MLP(
             model_size=model_size,
             output_layer_size=None,
+            name="reward_predictor"
         )
         self.reward_layer = RewardPredictorLayer(
             num_buckets=num_buckets,

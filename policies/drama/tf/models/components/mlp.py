@@ -9,10 +9,7 @@ https://arxiv.org/pdf/2010.02193.pdf
 """
 from typing import Optional
 
-from policies.drama.utils import (
-    get_dense_hidden_units,
-    get_num_dense_layers,
-)
+from policies.drama.utils import *
 from ray.rllib.utils.framework import try_import_tf
 
 _, tf, _ = try_import_tf()
@@ -53,10 +50,30 @@ class MLP(tf.keras.Model):
         """
         super().__init__(name=name or "mlp")
 
-        num_dense_layers = get_num_dense_layers(model_size, override=num_dense_layers)
-        dense_hidden_units = get_dense_hidden_units(
-            model_size, override=dense_hidden_units
-        )
+        if name is None:
+            num_dense_layers = get_num_dense_layers(model_size, override=num_dense_layers)
+            dense_hidden_units = get_dense_hidden_units(model_size, override=dense_hidden_units)
+        elif name == "vector_encoder":
+            num_dense_layers = get_num_dense_layers_encoder(model_size, override=num_dense_layers)
+            dense_hidden_units = get_dense_hidden_units_encoder(model_size, override=dense_hidden_units)
+        elif name == "vector_decoder":
+            num_dense_layers = get_num_dense_layers_decoder(model_size, override=num_dense_layers)
+            dense_hidden_units = get_dense_hidden_units_decoder(model_size, override=dense_hidden_units)
+        elif name == "reward_predictor":
+            num_dense_layers = get_num_dense_layers_reward(model_size, override=num_dense_layers)
+            dense_hidden_units = get_dense_hidden_units_reward(model_size, override=dense_hidden_units)
+        elif name == "continue_predictor":
+            num_dense_layers = get_num_dense_layers_continue(model_size, override=num_dense_layers)
+            dense_hidden_units = get_dense_hidden_units_continue(model_size, override=dense_hidden_units)
+        elif "actor" in name:
+            num_dense_layers = get_num_dense_layers_actor(model_size, override=num_dense_layers)
+            dense_hidden_units = get_dense_hidden_units_actor(model_size, override=dense_hidden_units)
+        elif "critic" in name:
+            num_dense_layers = get_num_dense_layers_critic(model_size, override=num_dense_layers)
+            dense_hidden_units = get_dense_hidden_units_critic(model_size, override=dense_hidden_units)
+        else:
+            num_dense_layers = get_num_dense_layers(model_size, override=num_dense_layers)
+            dense_hidden_units = get_dense_hidden_units(model_size, override=dense_hidden_units)
 
         self.dense_layers = []
         for _ in range(num_dense_layers):

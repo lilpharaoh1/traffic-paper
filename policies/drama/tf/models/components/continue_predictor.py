@@ -116,7 +116,7 @@ class ContinuePredictor(tf.keras.Model):
         """
         super().__init__(name="continue_predictor")
         self.model_size = model_size
-        self.mlp = MLP(model_size=model_size, output_layer_size=1)
+        self.mlp = MLP(model_size=model_size, output_layer_size=1, name="continue_predictor")
 
     def call(self, x):
         """Performs a forward pass through the continue predictor.

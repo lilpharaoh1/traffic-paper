@@ -30,8 +30,74 @@ def get_dense_hidden_units(model_size, override=None):
 
     assert model_size in _ALLOWED_MODEL_DIMS
     dense_units = {
-        "XS": 256,
-        "D": 640,
+        "XS": 64,
+        "D": 256,
+    }
+    return dense_units[model_size]
+
+def get_dense_hidden_units_reward(model_size, override=None):
+    if override is not None:
+        return override
+
+    assert model_size in _ALLOWED_MODEL_DIMS
+    dense_units = {
+        "XS": 64,
+        "D": 256,
+    }
+    return dense_units[model_size]
+
+def get_dense_hidden_units_continue(model_size, override=None):
+    if override is not None:
+        return override
+
+    assert model_size in _ALLOWED_MODEL_DIMS
+    dense_units = {
+        "XS": 64,
+        "D": 256,
+    }
+    return dense_units[model_size]
+
+def get_dense_hidden_units_encoder(model_size, override=None):
+    if override is not None:
+        return override
+
+    assert model_size in _ALLOWED_MODEL_DIMS
+    dense_units = {
+        "XS": 64,
+        "D": 256,
+    }
+    return dense_units[model_size]
+
+def get_dense_hidden_units_decoder(model_size, override=None):
+    if override is not None:
+        return override
+
+    assert model_size in _ALLOWED_MODEL_DIMS
+    dense_units = {
+        "XS": 64,
+        "D": 256,
+    }
+    return dense_units[model_size]
+
+def get_dense_hidden_units_actor(model_size, override=None):
+    if override is not None:
+        return override
+
+    assert model_size in _ALLOWED_MODEL_DIMS
+    dense_units = {
+        "XS": 64,
+        "D": 256,
+    }
+    return dense_units[model_size]
+
+def get_dense_hidden_units_critic(model_size, override=None):
+    if override is not None:
+        return override
+
+    assert model_size in _ALLOWED_MODEL_DIMS
+    dense_units = {
+        "XS": 128,
+        "D": 512,
     }
     return dense_units[model_size]
 
@@ -85,6 +151,72 @@ def get_num_curiosity_nets(model_size, override=None):
 
 
 def get_num_dense_layers(model_size, override=None):
+    if override is not None:
+        return override
+
+    assert model_size in _ALLOWED_MODEL_DIMS
+    num_dense_layers = {
+        "XS": 1,
+        "D": 2,
+    }
+    return num_dense_layers[model_size]
+
+def get_num_dense_layers_reward(model_size, override=None):
+    if override is not None:
+        return override
+
+    assert model_size in _ALLOWED_MODEL_DIMS
+    num_dense_layers = {
+        "XS": 1,
+        "D": 1,
+    }
+    return num_dense_layers[model_size]
+
+def get_num_dense_layers_continue(model_size, override=None):
+    if override is not None:
+        return override
+
+    assert model_size in _ALLOWED_MODEL_DIMS
+    num_dense_layers = {
+        "XS": 1,
+        "D": 1,
+    }
+    return num_dense_layers[model_size]
+
+def get_num_dense_layers_encoder(model_size, override=None):
+    if override is not None:
+        return override
+
+    assert model_size in _ALLOWED_MODEL_DIMS
+    num_dense_layers = {
+        "XS": 1,
+        "D": 3,
+    }
+    return num_dense_layers[model_size]
+
+def get_num_dense_layers_decoder(model_size, override=None):
+    if override is not None:
+        return override
+
+    assert model_size in _ALLOWED_MODEL_DIMS
+    num_dense_layers = {
+        "XS": 1,
+        "D": 3,
+    }
+    return num_dense_layers[model_size]
+
+def get_num_dense_layers_actor(model_size, override=None):
+    if override is not None:
+        return override
+
+    assert model_size in _ALLOWED_MODEL_DIMS
+    num_dense_layers = {
+        "XS": 1,
+        "D": 3,
+    }
+    return num_dense_layers[model_size]
+
+def get_num_dense_layers_critic(model_size, override=None):
     if override is not None:
         return override
 

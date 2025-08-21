@@ -133,6 +133,7 @@ class VectorDecoder(tf.keras.Model):
         self.mlp = MLP(
             model_size=model_size,
             output_layer_size=observation_space.shape[0],
+            name="vector_decoder"
         )
 
     def call(self, x):

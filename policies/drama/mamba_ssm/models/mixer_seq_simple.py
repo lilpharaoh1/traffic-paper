@@ -30,7 +30,6 @@ from policies.drama.mamba_ssm.utils.models import (
     get_model_units,
     get_n_layer,
     get_intermediate_units,
-    get_stoch_dim,
 )
 
 # EMRAN figure out what to do with this
