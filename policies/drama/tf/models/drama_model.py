@@ -11,7 +11,7 @@ import numpy as np
 from policies.drama.tf.models.disagree_networks import DisagreeNetworks
 from policies.drama.tf.models.actor_network import ActorNetwork
 from policies.drama.tf.models.critic_network import CriticNetwork
-from policies.drama.tf.models.world_model import WorldModel
+from policies.drama.tf.models.world_model import WorldModel, straight_through_gradient, flatten_sample
 from policies.drama.utils import (
     get_gru_units,
     get_num_z_categoricals,
@@ -59,7 +59,7 @@ class DramaModel(tf.keras.Model):
              critic: The CriticNetwork component.
              horizon: The dream horizon to use when creating dreamed trajectories.
         """
-        super().__init__(name="dreamer_model")
+        super().__init__(name="drama_model")
 
         self.model_size = model_size
         self.action_space = action_space
@@ -299,141 +299,231 @@ class DramaModel(tf.keras.Model):
                 first timesteps of each batch row is already a terminated timestep
                 (given by the actual environment).
         """
-        # Dreamed actions (one-hot encoded for discrete actions).
-        a_dreamed_t0_to_H = []
-        a_dreamed_dist_params_t0_to_H = []
+        context_feat  = start_states["dist_feat"]         # [B, T, F]
+        context_prior = start_states["flattened_prior"]   # [B, T, Z]
+        B = tf.shape(context_feat)[0] 
+        T = tf.shape(context_feat)[1]
+        H = self.horizon 
 
-        h = start_states["h"]
-        z = start_states["z"]
+        # Seed with last context step, keep [B, 1, ·]
+        feat0  = context_feat[:,  -1:, :]   # [B, 1, F]
+        prior0 = context_prior[:, -1:, :]   # [B, 1, Z]
 
-        # GRU outputs.
-        h_states_t0_to_H = [h]
-        # Dynamics model outputs.
-        z_states_prior_t0_to_H = [z]
+        # Actor expects [B, 1, D]
+        x = tf.concat([feat0, prior0], axis=-1)   # [B, 1, F+Z]
+        action, action_logits = self.actor(x=x)     # action: [B, A] (actor flattens B*1)
 
-        # Compute `a` using actor network (already the first step uses a dreamed action,
-        # not a sampled one).
-        a, a_dist_params = self.actor(
-            # We have to stop the gradients through the states. B/c we are using a
-            # differentiable Discrete action distribution (straight through gradients
-            # with `a = stop_gradient(sample(probs)) + probs - stop_gradient(probs)`,
-            # we otherwise would add dependencies of the `-log(pi(a|s))` REINFORCE loss
-            # term on actions further back in the trajectory.
-            h=tf.stop_gradient(h),
-            z=tf.stop_gradient(z),
+        # Keep a time axis on actions/logits: [B, 1, ·]
+        action0 = action[:, None, :]              # [B, 1, A]
+        logits0 = action_logits[:, None, ...]     # [B, 1, ...]
+
+        ta_feat   = tf.TensorArray(tf.float32, size=H+1)
+        ta_prior  = tf.TensorArray(tf.float32, size=H+1)
+        ta_action = tf.TensorArray(tf.float32, size=H+1)
+        ta_logits = tf.TensorArray(tf.float32, size=H+1)
+
+        ta_feat  = ta_feat.write(0, feat0)
+        ta_prior = ta_prior.write(0, prior0)
+        ta_action = ta_action.write(0, action0)
+        ta_logits = ta_logits.write(0, logits0)
+
+        action_1t = action0
+        for t in tf.range(H):
+            feat_t  = ta_feat.read(t)    # [B, 1, F]
+            prior_t = ta_prior.read(t)   # [B, 1, Z]
+
+            # RSSM/dynamics step; keep [B, 1, ·] API throughout
+            dist_feat = self.world_model.sequence_model(prior_t, action_1t)      # [B, 1, F]
+            ta_feat   = ta_feat.write(t + 1, dist_feat)
+
+            prior_logits = self.world_model.dist_head.forward_prior(dist_feat)    # [B, 1, Zlogits]
+            prior_sample = straight_through_gradient(prior_logits)                # [B, 1, Z(one-hot?)]
+            prior_flat   = flatten_sample(prior_sample)                           # [B, 1, Z]
+            ta_prior     = ta_prior.write(t + 1, prior_flat)
+
+            # Actor expects [B, 1, D]
+            x = tf.concat([feat_t, prior_t], axis=-1)   # [B, 1, F+Z]
+            action, action_logits = self.actor(x=x)     # action: [B, A] (actor flattens B*1)
+
+            # Keep a time axis on actions/logits: [B, 1, ·]
+            action_1t = action[:, None, :]              # [B, 1, A]
+            logits_1t = action_logits[:, None, ...]     # [B, 1, ...]
+
+            ta_action = ta_action.write(t + 1, action_1t)
+            ta_logits = ta_logits.write(t + 1, logits_1t)
+            
+        # EMRAN can remove transpose if working correctly
+        feat_buffer   = tf.transpose(tf.squeeze(ta_feat.stack(),  axis=2),      [0, 1, 2])   # [H + 1, B,  F]
+        prior_buffer  = tf.transpose(tf.squeeze(ta_prior.stack(), axis=2),      [0, 1, 2])   # [H + 1, B,  Z]
+        actions       = tf.transpose(tf.squeeze(ta_action.stack(), axis=2),     [0, 1, 2])   # [H + 1, B, A]
+        action_logits = tf.transpose(tf.squeeze(ta_logits.stack(), axis=2),     [0, 1, 2])   # [H + 1, B, ...]
+
+
+        # # Dreamed actions (one-hot encoded for discrete actions).
+        # a_dreamed_t0_to_H = []
+        # a_dreamed_dist_params_t0_to_H = []
+
+        # # context_obs = start_states["sampled_obs_symlog_BxT"]
+        # # context_action = start_states["n"]
+        # context_post = start_states["flattened_post"]
+        # context_dist_feat = start_states["dist_feat"]
+        # context_prior = start_states["flattened_prior"]
+        # B = tf.shape(context_post)[0]
+        # T = tf.shape(context_post)[1]
+
+        # # # GRU outputs.
+        # # h_states_t0_to_H = [h]
+        # # # Dynamics model outputs.
+        # # z_states_prior_t0_to_H = [z]
+
+        # # Compute `a` using actor network (already the first step uses a dreamed action,
+        # # not a sampled one).
+        # a, a_dist_params = self.actor(
+        #     # We have to stop the gradients through the states. B/c we are using a
+        #     # differentiable Discrete action distribution (straight through gradients
+        #     # with `a = stop_gradient(sample(probs)) + probs - stop_gradient(probs)`,
+        #     # we otherwise would add dependencies of the `-log(pi(a|s))` REINFORCE loss
+        #     # term on actions further back in the trajectory.
+        #     x=tf.concat([context_dist_feat, context_prior], axis=-1)
+        # )
+        # a = tf.reshape(a, shape=tf.concat([[B], [T], [-1]], axis=0))
+        # a_dreamed_t0_to_H.append(a)
+        # a_dreamed_dist_params_t0_to_H.append(a_dist_params)
+
+        # # Move one step in the dream using the RSSM.
+        # print("FEEDING CONTEXT_DIST_FEAT) context_post, a:", context_post, a)
+        # context_dist_feat = self.world_model.sequence_model(context_post, a)
+
+        # # Compute prior z using dynamics model.
+        # context_prior_logits = self.world_model.dist_head.forward_prior(context_dist_feat)
+        # context_prior_sample = straight_through_gradient(context_prior_logits)
+        # context_prior = flatten_sample(context_prior_sample)
+    
+        # feat_list, prior_list = [context_dist_feat[:, -1:]], [context_prior[:, -1:]]
+        # prior_buffer[:, 0:1] = context_prior[:, -1:]
+        # feat_buffer[:, 0:1] = context_dist_feat[:, -1:]
+        # action_list, old_logits_list = [], []
+
+        # for i in range(self.horizon):
+        #     action, action_logits = self.actor(x=tf.concat([feat_buffer[:, i:i+1], prior_buffer[:, i:i+1]], axis=-1))
+        #     action = tf.reshape(action, shape=tf.concat([[B], [T], [-1]], axis=0))
+        #     action_list.append(action)
+        #     old_logits_list.append(action_logits)
+            
+        #     dist_feat = self.world_model.sequence_model(context_prior[-1], action_list[-1])
+        #     dist_feat_list.append(dist_feat)
+        #     feat_buffer[:, i+1:i+2] = dist_feat
+
+        #     prior_logits = self.dist_head.forward_prior(dist_feat_list[-1])
+        #     prior_sample = straight_through_gradient(prior_logits)
+        #     prior_flattened_sample = flatten_sample(prior_sample)
+
+        #     prior_list.append(prior_flattened_sample)
+        #     prior_buffer[:, i+1:i+2] = prior_flattened_sample
+
+            # # Move one step in the dream using the RSSM.
+            # dist_feat = self.world_model.sequence_model(flattened_post, a)
+            # dist_feats_t0_to_H.append(dist_feat)
+
+            # # Compute prior z using dynamics model.
+            # context_prior_logits = self.dist_head.forward_prior(context_dist_feat)
+            # context_prior_sample = self.stright_throught_gradient(context_prior_logits)
+            # context_flattened_sample = self.flatten_sample(context_prior_sample)
+
+            # # Compute `a` using actor network.
+            # a, a_dist_params = self.actor(
+            #     h=tf.stop_gradient(h),
+            #     z=tf.stop_gradient(z),
+            # )
+            # a_dreamed_t0_to_H.append(a)
+            # a_dreamed_dist_params_t0_to_H.append(a_dist_params)
+
+        print("SEEING) feat_buffer:", feat_buffer)
+        feat_buffer_HxB = tf.reshape(
+            feat_buffer, shape=tf.concat([[-1], tf.shape(feat_buffer)[2:]], axis=0)
         )
-        a_dreamed_t0_to_H.append(a)
-        a_dreamed_dist_params_t0_to_H.append(a_dist_params)
+        print("SEEING) feat_buffer_BxH:", feat_buffer_HxB)
 
-        for i in range(self.horizon):
-            # Move one step in the dream using the RSSM.
-            h = self.world_model.sequence_model(a=a, h=h, z=z)
-            h_states_t0_to_H.append(h)
+        reward_hat, reward_logits = self.world_model.reward_predictor(feat_buffer_HxB)
+        print("SEEING) reward_hat:", reward_hat)
+        reward_hat_H_B = tf.reshape(reward_hat, [H + 1, -1])
 
-            # Compute prior z using dynamics model.
-            z, _ = self.world_model.dynamics_predictor(h=h)
-            z_states_prior_t0_to_H.append(z)
+        continue_hat, continue_logits = self.world_model.continue_predictor(feat_buffer_HxB)
+        continue_hat_buffer = continue_hat > 0
+        continue_hat_H_B = tf.reshape(continue_hat, [H + 1, -1]) # EMRAN check continue is correct? Or should it be continue-1 or something
 
-            # Compute `a` using actor network.
-            a, a_dist_params = self.actor(
-                h=tf.stop_gradient(h),
-                z=tf.stop_gradient(z),
-            )
-            a_dreamed_t0_to_H.append(a)
-            a_dreamed_dist_params_t0_to_H.append(a_dist_params)
+        # EMRAN used to be near here
+        # c_dreamed_H_B = tf.concat(
+        #     [
+        #         1.0
+        #         - tf.expand_dims(
+        #             tf.cast(start_is_terminated, tf.float32),
+        #             0,
+        #         ),
+        #         c_dreamed_H_B[1:],
+        #     ],
+        #     axis=0,
+        # )
 
-        h_states_H_B = tf.stack(h_states_t0_to_H, axis=0)  # (T, B, ...)
-        h_states_HxB = tf.reshape(h_states_H_B, [-1] + h_states_H_B.shape.as_list()[2:])
 
-        z_states_prior_H_B = tf.stack(z_states_prior_t0_to_H, axis=0)  # (T, B, ...)
-        z_states_prior_HxB = tf.reshape(
-            z_states_prior_H_B, [-1] + z_states_prior_H_B.shape.as_list()[2:]
-        )
+        # EMRAN intrinsic reward not implemented yet
+        # # Compute intrinsic rewards.
+        # if self.use_curiosity:
+        #     results_HxB = self.disagree_nets.compute_intrinsic_rewards(
+        #         h=h_states_HxB,
+        #         z=z_states_prior_HxB,
+        #         a=tf.reshape(a_dreamed_H_B, [-1] + a_dreamed_H_B.shape.as_list()[2:]),
+        #     )
+        #     # TODO (sven): Wrong? -> Cut out last timestep as we always predict z-states
+        #     #  for the NEXT timestep and derive ri (for the NEXT timestep) from the
+        #     #  disagreement between our N disagreee nets.
+        #     r_intrinsic_H_B = tf.reshape(
+        #         results_HxB["rewards_intrinsic"], shape=[self.horizon + 1, -1]
+        #     )[
+        #         1:
+        #     ]  # cut out first ts instead
+        #     curiosity_forward_train_outs = results_HxB["forward_train_outs"]
+        #     del results_HxB
 
-        a_dreamed_H_B = tf.stack(a_dreamed_t0_to_H, axis=0)  # (T, B, ...)
-        a_dreamed_dist_params_H_B = tf.stack(a_dreamed_dist_params_t0_to_H, axis=0)
-
-        # Compute r using reward predictor.
-        r_dreamed_HxB, _ = self.world_model.reward_predictor(
-            h=h_states_HxB, z=z_states_prior_HxB
-        )
-        r_dreamed_H_B = tf.reshape(
-            inverse_symlog(r_dreamed_HxB), shape=[self.horizon + 1, -1]
-        )
-
-        # Compute intrinsic rewards.
-        if self.use_curiosity:
-            results_HxB = self.disagree_nets.compute_intrinsic_rewards(
-                h=h_states_HxB,
-                z=z_states_prior_HxB,
-                a=tf.reshape(a_dreamed_H_B, [-1] + a_dreamed_H_B.shape.as_list()[2:]),
-            )
-            # TODO (sven): Wrong? -> Cut out last timestep as we always predict z-states
-            #  for the NEXT timestep and derive ri (for the NEXT timestep) from the
-            #  disagreement between our N disagreee nets.
-            r_intrinsic_H_B = tf.reshape(
-                results_HxB["rewards_intrinsic"], shape=[self.horizon + 1, -1]
-            )[
-                1:
-            ]  # cut out first ts instead
-            curiosity_forward_train_outs = results_HxB["forward_train_outs"]
-            del results_HxB
-
-        # Compute continues using continue predictor.
-        c_dreamed_HxB, _ = self.world_model.continue_predictor(
-            h=h_states_HxB,
-            z=z_states_prior_HxB,
-        )
-        c_dreamed_H_B = tf.reshape(c_dreamed_HxB, [self.horizon + 1, -1])
-        # Force-set first `continue` flags to False iff `start_is_terminated`.
-        # Note: This will cause the loss-weights for this row in the batch to be
-        # completely zero'd out. In general, we don't use dreamed data past any
-        # predicted (or actual first) continue=False flags.
-        c_dreamed_H_B = tf.concat(
-            [
-                1.0
-                - tf.expand_dims(
-                    tf.cast(start_is_terminated, tf.float32),
-                    0,
-                ),
-                c_dreamed_H_B[1:],
-            ],
-            axis=0,
-        )
 
         # Loss weights for each individual dreamed timestep. Zero-out all timesteps
         # that lie past continue=False flags. B/c our world model does NOT learn how
         # to skip terminal/reset episode boundaries, dreamed data crossing such a
         # boundary should not be used for critic/actor learning either.
         dream_loss_weights_H_B = (
-            tf.math.cumprod(self.gamma * c_dreamed_H_B, axis=0) / self.gamma
+            tf.math.cumprod(self.gamma * continue_hat_H_B, axis=0) / self.gamma
         )
 
         # Compute the value estimates.
         v, v_symlog_dreamed_logits_HxB = self.critic(
-            h=h_states_HxB,
-            z=z_states_prior_HxB,
+            tf.concat([feat_buffer, prior_buffer], axis=-1),
             use_ema=False,
         )
         v_dreamed_HxB = inverse_symlog(v)
-        v_dreamed_H_B = tf.reshape(v_dreamed_HxB, shape=[self.horizon + 1, -1])
+        v_dreamed_H_B = tf.reshape(v_dreamed_HxB, shape=[H + 1, -1])
 
         v_symlog_dreamed_ema_HxB, _ = self.critic(
-            h=h_states_HxB,
-            z=z_states_prior_HxB,
+            tf.concat([feat_buffer, prior_buffer], axis=-1),
             use_ema=True,
         )
         v_symlog_dreamed_ema_H_B = tf.reshape(
-            v_symlog_dreamed_ema_HxB, shape=[self.horizon + 1, -1]
+            v_symlog_dreamed_ema_HxB, shape=[H + 1, -1]
+        )
+
+        feat_buffer_H_B = tf.reshape(
+            feat_buffer, shape=[H + 1, B, -1]
+        )
+        prior_buffer_H_B = tf.reshape(
+            prior_buffer, shape=[H + 1, B, -1]
         )
 
         ret = {
-            "h_states_t0_to_H_BxT": h_states_H_B,
-            "z_states_prior_t0_to_H_BxT": z_states_prior_H_B,
-            "rewards_dreamed_t0_to_H_BxT": r_dreamed_H_B,
-            "continues_dreamed_t0_to_H_BxT": c_dreamed_H_B,
-            "actions_dreamed_t0_to_H_BxT": a_dreamed_H_B,
-            "actions_dreamed_dist_params_t0_to_H_BxT": a_dreamed_dist_params_H_B,
+            "feats_t0_to_H_BxT": feat_buffer_H_B,
+            "priors_prior_t0_to_H_BxT": prior_buffer_H_B,
+            "rewards_dreamed_t0_to_H_BxT": reward_hat_H_B,
+            "continues_dreamed_t0_to_H_BxT": continue_hat_H_B,
+            "actions_dreamed_t0_to_H_BxT": actions,
+            "actions_dreamed_dist_params_t0_to_H_BxT": action_logits,
             "values_dreamed_t0_to_H_BxT": v_dreamed_H_B,
             "values_symlog_dreamed_logits_t0_to_HxBxT": v_symlog_dreamed_logits_HxB,
             "v_symlog_dreamed_ema_t0_to_H_BxT": v_symlog_dreamed_ema_H_B,

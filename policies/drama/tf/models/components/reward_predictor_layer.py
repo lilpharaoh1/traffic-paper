@@ -95,13 +95,11 @@ class RewardPredictorLayer(tf.keras.layers.Layer):
         # [2]: "The mean of the reward predictor pφ(ˆrt | zˆt) is used as reward
         # sequence rˆ1:H."
         probs = tf.nn.softmax(logits)
-        print("probs:", probs)
         possible_outcomes = tf.linspace(
             self.lower_bound,
             self.upper_bound,
             self.num_buckets,
         )
-        print("possible_outcomes:", possible_outcomes)
         # probs=possible_outcomes=[B, `num_buckets`]
 
         # Simple vector dot product (over last dim) to get the mean reward
@@ -109,6 +107,5 @@ class RewardPredictorLayer(tf.keras.layers.Layer):
         expected_rewards = tf.reduce_sum(probs * possible_outcomes, axis=-1)
         # expected_rewards=[B]
 
-        print("end of reward:", expected_rewards, logits)
 
         return expected_rewards, logits

@@ -23,6 +23,11 @@ from ray.rllib.utils.framework import try_import_tf, try_import_tfp
 from ray.rllib.utils.tf_utils import symlog, two_hot, clip_gradients
 from ray.rllib.utils.typing import ModuleID, TensorType
 
+from policies.drama.utils import (
+    get_num_z_categoricals,
+    get_num_z_classes,
+)
+
 _, tf, _ = try_import_tf()
 tfp = try_import_tfp()
 
@@ -42,7 +47,7 @@ class DramaTfLearner(DramaLearner, TfLearner):
     def configure_optimizers_for_module(
         self, module_id: ModuleID, config: DramaConfig = None, hps=None
     ):
-        """Create the 3 optimizers for Dreamer learning: world_model, actor, critic.
+        """Create the 3 optimizers for Drama learning: world_model, actor, critic.
 
         The learning rates used are described in [1] and the epsilon values used here
         - albeit probably not that important - are used by the author's own
@@ -212,6 +217,8 @@ class DramaTfLearner(DramaLearner, TfLearner):
             + 0.1 * L_rep_B_T
         )
 
+        print("CHECKPOINT) END OF L_world_model_total_B_T")
+
         # In the paper, it says to sum up timesteps, and average over
         # batch (see eq. 4 in [1]). But Danijar's implementation only does
         # averaging (over B and T), so we'll do this here as well. This is generally
@@ -269,13 +276,16 @@ class DramaTfLearner(DramaLearner, TfLearner):
         # Everything goes in as BxT: We are starting a new dream trajectory at every
         # actually encountered timestep in the batch, so we are creating B*T
         # trajectories of len `horizon_H`.
-        dream_data = self.module[module_id].dreamer_model.dream_trajectory(
+        
+        dream_data = self.module[module_id].drama_model.dream_trajectory(
             start_states={
-                "h": fwd_out["h_states_BxT"],
-                "z": fwd_out["z_posterior_states_BxT"],
+                "dist_feat": fwd_out["dist_feat"],
+                "flattened_prior": fwd_out["flattened_prior"],
+                "flattened_post": fwd_out["flattened_post"]
             },
             start_is_terminated=tf.reshape(batch["is_terminated"], [-1]),  # ->BxT
         )
+        print("dream_data:", dream_data)
         if config.report_dream_data:
             # To reduce this massive mount of data a little, slice out a T=1 piece
             # from each stats that has the shape (H, BxT), meaning convert e.g.
@@ -296,15 +306,11 @@ class DramaTfLearner(DramaLearner, TfLearner):
 
         print("CHECKPOINT) END OF register_metrics3")
 
+
+        assert not config.use_curiosity, "EMRAN use_curiosity is not implemented"
         value_targets_t0_to_Hm1_BxT = self._compute_value_targets(
             config=config,
-            # Learn critic in symlog'd space.
             rewards_t0_to_H_BxT=dream_data["rewards_dreamed_t0_to_H_BxT"],
-            intrinsic_rewards_t1_to_H_BxT=(
-                dream_data["rewards_intrinsic_t1_to_H_B"]
-                if config.use_curiosity
-                else None
-            ),
             continues_t0_to_H_BxT=dream_data["continues_dreamed_t0_to_H_BxT"],
             value_predictions_t0_to_H_BxT=dream_data["values_dreamed_t0_to_H_BxT"],
         )
@@ -466,66 +472,36 @@ class DramaTfLearner(DramaLearner, TfLearner):
             observations.
         """
 
-        # Actual distribution over stochastic internal states (z) produced by the
-        # encoder.
-        print("CHECKPOINT) BEFORE")
-        z_posterior_probs_BxT = fwd_out["z_posterior_probs_BxT"]
-        z_posterior_distr_BxT = tfp.distributions.Independent(
-            tfp.distributions.OneHotCategorical(probs=z_posterior_probs_BxT),
-            reinterpreted_batch_ndims=1,
-        )
+        flattened_post = fwd_out["flattened_post"]
+        flattened_prior = fwd_out["flattened_prior"]
 
-        print("CHECKPOINT) AFTER")
+        B = tf.shape(flattened_post)[0]
+        T = tf.shape(flattened_post)[1]
+        K = get_num_z_categoricals(config.model_size) # tf.shape(flattened_post)[2] / 2
+        C = get_num_z_classes(config.model_size) # tf.shape(flattened_post)[2] / 2
 
-        # Actual distribution over stochastic internal states (z) produced by the
-        # dynamics network.
-        z_prior_probs_BxT = fwd_out["z_prior_probs_BxT"]
-        z_prior_distr_BxT = tfp.distributions.Independent(
-            tfp.distributions.OneHotCategorical(probs=z_prior_probs_BxT),
-            reinterpreted_batch_ndims=1,
-        )
+        post  = tf.reshape(flattened_post,  [B, T, K, C])
+        prior = tf.reshape(flattened_prior, [B, T, K, C])
 
-        # Stop gradient for encoder's z-outputs:
-        sg_z_posterior_distr_BxT = tfp.distributions.Independent(
-            tfp.distributions.OneHotCategorical(
-                probs=tf.stop_gradient(z_posterior_probs_BxT)
-            ),
-            reinterpreted_batch_ndims=1,
-        )
-        # Stop gradient for dynamics model's z-outputs:
-        sg_z_prior_distr_BxT = tfp.distributions.Independent(
-            tfp.distributions.OneHotCategorical(
-                probs=tf.stop_gradient(z_prior_probs_BxT)
-            ),
-            reinterpreted_batch_ndims=1,
-        )
+        base_post  = tfp.distributions.OneHotCategorical(probs=post)   # batch [B,T,K], event [C]
+        base_prior = tfp.distributions.OneHotCategorical(probs=prior)
 
-        # Implement free bits. According to [1]:
-        # "To avoid a degenerate solution where the dynamics are trivial to predict but
-        # contain not enough information about the inputs, we employ free bits by
-        # clipping the dynamics and representation losses below the value of
-        # 1 nat ≈ 1.44 bits. This disables them while they are already minimized well to
-        # focus the world model on its prediction loss"
-        L_dyn_BxT = tf.math.maximum(
-            1.0,
-            tfp.distributions.kl_divergence(
-                sg_z_posterior_distr_BxT, z_prior_distr_BxT
-            ),
-        )
-        # Unfold time rank back in.
+        # reinterpret K (NOT T) as event → batch [B,T], event [K,C]
+        post_dist  = tfp.distributions.Independent(base_post,  reinterpreted_batch_ndims=1)
+        prior_dist = tfp.distributions.Independent(base_prior, reinterpreted_batch_ndims=1)
+
+        sg_post_dist  = tfp.distributions.Independent(tfp.distributions.OneHotCategorical(probs=tf.stop_gradient(post)),  1)
+        sg_prior_dist = tfp.distributions.Independent(tfp.distributions.OneHotCategorical(probs=tf.stop_gradient(prior)), 1)
+
+        L_dyn_BxT = tf.maximum(1.0, tfp.distributions.kl_divergence(sg_post_dist,  prior_dist))  # [B, T]
+        L_rep_BxT = tf.maximum(1.0, tfp.distributions.kl_divergence(post_dist, sg_prior_dist))   # [B, T]
+
         L_dyn_B_T = tf.reshape(
-            L_dyn_BxT, (config.batch_size_B_per_learner, config.batch_length_T)
+            L_dyn_BxT, (B, T)
         )
 
-        L_rep_BxT = tf.math.maximum(
-            1.0,
-            tfp.distributions.kl_divergence(
-                z_posterior_distr_BxT, sg_z_prior_distr_BxT
-            ),
-        )
-        # Unfold time rank back in.
         L_rep_B_T = tf.reshape(
-            L_rep_BxT, (config.batch_size_B_per_learner, config.batch_length_T)
+            L_rep_BxT, (B, T)
         )
 
         return L_dyn_B_T, L_rep_B_T
@@ -553,6 +529,8 @@ class DramaTfLearner(DramaLearner, TfLearner):
         """
         actor = self.module[module_id].actor
 
+        print("SEEING) value_targets_t0_to_Hm1_BxT:", value_targets_t0_to_Hm1_BxT)
+
         # Note: `scaled_value_targets_t0_to_Hm1_B` are NOT stop_gradient'd yet.
         scaled_value_targets_t0_to_Hm1_B = self._compute_scaled_value_targets(
             module_id=module_id,
@@ -562,6 +540,7 @@ class DramaTfLearner(DramaLearner, TfLearner):
                 :-1
             ],
         )
+        print("SEEING) scaled_value_targets_t0_to_Hm1_B:", scaled_value_targets_t0_to_Hm1_B)
 
         # Actions actually taken in the dream.
         actions_dreamed = tf.stop_gradient(dream_data["actions_dreamed_t0_to_H_BxT"])[
@@ -570,6 +549,8 @@ class DramaTfLearner(DramaLearner, TfLearner):
         actions_dreamed_dist_params_t0_to_Hm1_B = dream_data[
             "actions_dreamed_dist_params_t0_to_H_BxT"
         ][:-1]
+
+        print("SEEING) actions_dreamed:", actions_dreamed)
 
         dist_t0_to_Hm1_B = actor.get_action_dist_object(
             actions_dreamed_dist_params_t0_to_Hm1_B
@@ -783,7 +764,6 @@ class DramaTfLearner(DramaLearner, TfLearner):
         *,
         config: DramaConfig,
         rewards_t0_to_H_BxT: TensorType,
-        intrinsic_rewards_t1_to_H_BxT: TensorType,
         continues_t0_to_H_BxT: TensorType,
         value_predictions_t0_to_H_BxT: TensorType,
     ) -> TensorType:
@@ -825,8 +805,10 @@ class DramaTfLearner(DramaLearner, TfLearner):
         """
         # The first reward is irrelevant (not used for any VF target).
         rewards_t1_to_H_BxT = rewards_t0_to_H_BxT[1:]
-        if intrinsic_rewards_t1_to_H_BxT is not None:
-            rewards_t1_to_H_BxT += intrinsic_rewards_t1_to_H_BxT
+        print("SEEING) rewards_t1_to_H_BxT:", rewards_t1_to_H_BxT)
+        # EMRAN intrinsic_reward not implemented
+        # if intrinsic_rewards_t1_to_H_BxT is not None:
+        #     rewards_t1_to_H_BxT += intrinsic_rewards_t1_to_H_BxT
 
         # In all the following, when building value targets for t=1 to T=H,
         # exclude rewards & continues for t=1 b/c we don't need r1 or c1.

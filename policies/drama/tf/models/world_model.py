@@ -320,7 +320,7 @@ class WorldModel(tf.keras.Model):
         print("\n\n\n\n\n\n\nprevious_states:", previous_states)
 
         B, T, obs_dim = previous_states['context_obs'].shape
-        B, T, action_dim = previous_states['context_obs'].shape
+        B, T, action_dim = previous_states['context_action'].shape
 
         print("AFTER) observation:", tf.reshape(previous_states['context_obs'], [-1, obs_dim]))
         embedding = self.encoder(
@@ -331,12 +331,12 @@ class WorldModel(tf.keras.Model):
         )
         print("AFTER) embedding:", embedding)
         post_logits = self.dist_head.forward_post(embedding)
-        sample = straight_through_gradient(post_logits, sample_mode="random_sample")
-        flattened_sample = flatten_sample(sample)
+        post_sample = straight_through_gradient(post_logits, sample_mode="random_sample")
+        flattened_post = flatten_sample(post_sample)
 
         print("after embedding")
 
-        dist_feat = self.sequence_model(flattened_sample, previous_states['context_action'])
+        dist_feat = self.sequence_model(flattened_post, previous_states['context_action'])
         print("after sequence model")
         last_dist_feat = dist_feat[:, -1:]
         print("last_dist_feat:", last_dist_feat)
@@ -396,17 +396,17 @@ class WorldModel(tf.keras.Model):
         )
         print("BEFORE) embedding:", embedding)
         post_logits = self.dist_head.forward_post(embedding)
-        sample = straight_through_gradient(post_logits, sample_mode="random_sample")
-        flattened_sample = flatten_sample(sample)
+        post_sample = straight_through_gradient(post_logits, sample_mode="random_sample")
+        flattened_post = flatten_sample(post_sample)
         
         # decoding image
-        obs_hat = self.decoder(flattened_sample)
+        obs_hat = self.decoder(flattened_post)
         obs_hat_BxT = tf.reshape(
             obs_hat, shape=tf.concat([[-1], shape[2:]], axis=0)
         )
 
         # dynamics model
-        dist_feat = self.sequence_model(flattened_sample, actions)
+        dist_feat = self.sequence_model(flattened_post, actions)
         prior_logits = self.dist_head.forward_prior(dist_feat)
         prior_sample = straight_through_gradient(prior_logits, sample_mode="random_sample")
         flattened_prior = flatten_sample(prior_sample)
@@ -440,6 +440,7 @@ class WorldModel(tf.keras.Model):
             # Hidden states 
             "dist_feat": dist_feat,
             "flattened_prior": flattened_prior,
+            "flattened_post": flattened_post,
 
             # EMRAN below is DreamerV3 stuff not used anymore
             # Deterministic, continuous h-states (t1 to T).

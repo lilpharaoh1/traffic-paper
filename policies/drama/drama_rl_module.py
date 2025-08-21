@@ -147,6 +147,8 @@ class DramaRLModule(RLModule, abc.ABC):
             "continues_BxT",
             "dist_feat",
             "flattened_prior",
+            "flattened_post",
+
             # EMRAN don't know if this will fix SpecError
             # # Sampled, discrete posterior z-states (t1 to T).
             # "z_posterior_states_BxT",
