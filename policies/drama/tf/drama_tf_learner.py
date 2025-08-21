@@ -190,9 +190,8 @@ class DramaTfLearner(DramaLearner, TfLearner):
             fwd_out=fwd_out,
         )
 
-        print("CHECKPOINT) OUTSIDE OF _compute_world_model_prediction_losses")
-        print(*"few_out:", fwd_out)
-
+        # print("CHECKPOINT) OUTSIDE OF _compute_world_model_prediction_losses")
+        
         (
             L_dyn_B_T,
             L_rep_B_T,
@@ -200,7 +199,7 @@ class DramaTfLearner(DramaLearner, TfLearner):
             config=config, fwd_out=fwd_out
         )
 
-        print("CHECKPOINT) END OF _compute_world_model_dynamics_and_representation_loss")
+        # print("CHECKPOINT) END OF _compute_world_model_dynamics_and_representation_loss")
 
         L_dyn = tf.reduce_mean(L_dyn_B_T)
         L_rep = tf.reduce_mean(L_rep_B_T)
@@ -208,7 +207,7 @@ class DramaTfLearner(DramaLearner, TfLearner):
         # gradients).
         tf.assert_equal(L_dyn, L_rep)
 
-        print("CHECKPOINT) END OF tf.assert_equal")
+        # print("CHECKPOINT) END OF tf.assert_equal")
 
         # Compute the actual total loss using fixed weights described in [1] eq. 4.
         L_world_model_total_B_T = (
@@ -217,7 +216,7 @@ class DramaTfLearner(DramaLearner, TfLearner):
             + 0.1 * L_rep_B_T
         )
 
-        print("CHECKPOINT) END OF L_world_model_total_B_T")
+        # print("CHECKPOINT) END OF L_world_model_total_B_T")
 
         # In the paper, it says to sum up timesteps, and average over
         # batch (see eq. 4 in [1]). But Danijar's implementation only does
@@ -251,7 +250,7 @@ class DramaTfLearner(DramaLearner, TfLearner):
             },
         )
 
-        print("CHECKPOINT) END OF register_metrics1")
+        # print("CHECKPOINT) END OF register_metrics1")
         
         if config.report_individual_batch_item_stats:
             self.register_metrics(
@@ -269,7 +268,7 @@ class DramaTfLearner(DramaLearner, TfLearner):
                 },
             )
 
-        print("CHECKPOINT) END OF register_metrics2")
+        # print("CHECKPOINT) END OF register_metrics2")
 
         # Dream trajectories starting in all internal states (h + z_posterior) that were
         # computed during world model training.
@@ -285,7 +284,6 @@ class DramaTfLearner(DramaLearner, TfLearner):
             },
             start_is_terminated=tf.reshape(batch["is_terminated"], [-1]),  # ->BxT
         )
-        print("dream_data:", dream_data)
         if config.report_dream_data:
             # To reduce this massive mount of data a little, slice out a T=1 piece
             # from each stats that has the shape (H, BxT), meaning convert e.g.
@@ -304,7 +302,7 @@ class DramaTfLearner(DramaLearner, TfLearner):
                 },
             )
 
-        print("CHECKPOINT) END OF register_metrics3")
+        # print("CHECKPOINT) END OF register_metrics3")
 
 
         assert not config.use_curiosity, "EMRAN use_curiosity is not implemented"
@@ -315,7 +313,7 @@ class DramaTfLearner(DramaLearner, TfLearner):
             value_predictions_t0_to_H_BxT=dream_data["values_dreamed_t0_to_H_BxT"],
         )
 
-        print("CHECKPOINT) END OF _compute_value_targets")
+        # print("CHECKPOINT) END OF _compute_value_targets")
 
         self.register_metric(
             module_id, "VALUE_TARGETS_H_BxT", value_targets_t0_to_Hm1_BxT
@@ -328,7 +326,7 @@ class DramaTfLearner(DramaLearner, TfLearner):
             value_targets_t0_to_Hm1_BxT=value_targets_t0_to_Hm1_BxT,
         )
 
-        print("CHECKPOINT) END OF _compute_critic_loss")
+        # print("CHECKPOINT) END OF _compute_critic_loss")
 
         if config.train_actor:
             ACTOR_L_total = self._compute_actor_loss(
@@ -340,7 +338,7 @@ class DramaTfLearner(DramaLearner, TfLearner):
         else:
             ACTOR_L_total = 0.0
 
-        print("CHECKPOINT) END OF _compute_actor_loss")
+        # print("CHECKPOINT) END OF _compute_actor_loss")
 
         # Return the total loss as a sum of all individual losses.
         return L_world_model_total + CRITIC_L_total + ACTOR_L_total
@@ -443,7 +441,7 @@ class DramaTfLearner(DramaLearner, TfLearner):
         L_pred_B_T = decoder_loss_B_T + reward_loss_two_hot_B_T + continue_loss_B_T
         L_pred = tf.reduce_mean(L_pred_B_T)
 
-        print("CHECKPOINT) END OF _compute_world_model_prediction_losses")
+        # print("CHECKPOINT) END OF _compute_world_model_prediction_losses")
 
         return {
             "L_decoder_B_T": decoder_loss_B_T,
@@ -529,7 +527,6 @@ class DramaTfLearner(DramaLearner, TfLearner):
         """
         actor = self.module[module_id].actor
 
-        print("SEEING) value_targets_t0_to_Hm1_BxT:", value_targets_t0_to_Hm1_BxT)
 
         # Note: `scaled_value_targets_t0_to_Hm1_B` are NOT stop_gradient'd yet.
         scaled_value_targets_t0_to_Hm1_B = self._compute_scaled_value_targets(
@@ -540,7 +537,6 @@ class DramaTfLearner(DramaLearner, TfLearner):
                 :-1
             ],
         )
-        print("SEEING) scaled_value_targets_t0_to_Hm1_B:", scaled_value_targets_t0_to_Hm1_B)
 
         # Actions actually taken in the dream.
         actions_dreamed = tf.stop_gradient(dream_data["actions_dreamed_t0_to_H_BxT"])[
@@ -549,8 +545,6 @@ class DramaTfLearner(DramaLearner, TfLearner):
         actions_dreamed_dist_params_t0_to_Hm1_B = dream_data[
             "actions_dreamed_dist_params_t0_to_H_BxT"
         ][:-1]
-
-        print("SEEING) actions_dreamed:", actions_dreamed)
 
         dist_t0_to_Hm1_B = actor.get_action_dist_object(
             actions_dreamed_dist_params_t0_to_Hm1_B
@@ -805,7 +799,6 @@ class DramaTfLearner(DramaLearner, TfLearner):
         """
         # The first reward is irrelevant (not used for any VF target).
         rewards_t1_to_H_BxT = rewards_t0_to_H_BxT[1:]
-        print("SEEING) rewards_t1_to_H_BxT:", rewards_t1_to_H_BxT)
         # EMRAN intrinsic_reward not implemented
         # if intrinsic_rewards_t1_to_H_BxT is not None:
         #     rewards_t1_to_H_BxT += intrinsic_rewards_t1_to_H_BxT

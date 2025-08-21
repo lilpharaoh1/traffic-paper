@@ -317,36 +317,26 @@ class WorldModel(tf.keras.Model):
         # h = self.sequence_model(a=previous_a, h=previous_h, z=previous_z)
         # z = self.compute_posterior_z(observations=observations, initial_h=h)
 
-        print("\n\n\n\n\n\n\nprevious_states:", previous_states)
 
         B, T, obs_dim = previous_states['context_obs'].shape
         B, T, action_dim = previous_states['context_action'].shape
 
-        print("AFTER) observation:", tf.reshape(previous_states['context_obs'], [-1, obs_dim]))
         embedding = self.encoder(
             tf.cast(tf.reshape(previous_states['context_obs'], [-1, obs_dim]), self._comp_dtype)
         )
         embedding = tf.reshape(
             embedding, shape=tf.concat([[B, T], tf.shape(embedding)[1:]], axis=0)
         )
-        print("AFTER) embedding:", embedding)
         post_logits = self.dist_head.forward_post(embedding)
         post_sample = straight_through_gradient(post_logits, sample_mode="random_sample")
         flattened_post = flatten_sample(post_sample)
 
-        print("after embedding")
-
         dist_feat = self.sequence_model(flattened_post, previous_states['context_action'])
-        print("after sequence model")
         last_dist_feat = dist_feat[:, -1:]
-        print("last_dist_feat:", last_dist_feat)
         prior_logits = self.dist_head.forward_prior(last_dist_feat)
         prior_sample = straight_through_gradient(prior_logits, sample_mode="random_sample")
         flattened_prior = flatten_sample(prior_sample)
         
-
-        print("returning dist_feat and prior logits")
-
         return dist_feat, flattened_prior
 
     def forward_train(self, observations, actions, is_first):
@@ -389,12 +379,10 @@ class WorldModel(tf.keras.Model):
         observations = tf.reshape(
             observations, shape=tf.concat([[-1], shape[2:]], axis=0)
         )
-        print("BEFORE) observation:", observations)
         embedding = self.encoder(tf.cast(observations, self._comp_dtype))
         embedding = tf.reshape(
             embedding, shape=tf.concat([[B, T], tf.shape(embedding)[1:]], axis=0)
         )
-        print("BEFORE) embedding:", embedding)
         post_logits = self.dist_head.forward_post(embedding)
         post_sample = straight_through_gradient(post_logits, sample_mode="random_sample")
         flattened_post = flatten_sample(post_sample)

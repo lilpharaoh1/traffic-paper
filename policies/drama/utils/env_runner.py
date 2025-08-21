@@ -360,9 +360,6 @@ class DramaEnvRunner(EnvRunner):
                     is_first[i] = False
 
                 self._states[i] = s
-            print("after add_env_step")
-            print("ts, num_timesteps:", ts, num_timesteps)
-            print("--------------------------")
 
         # Return done episodes ...
         self._done_episodes_for_metrics.extend(done_episodes_to_return)

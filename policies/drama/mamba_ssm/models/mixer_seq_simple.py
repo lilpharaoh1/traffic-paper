@@ -323,22 +323,20 @@ class MixerModel(tf.keras.Model):
         data = tf.concat([samples, action], axis=-1)
         hidden_states = data
         for idx, block in enumerate(self.stem):
-            print(f"{idx+1}/{len(self.stem)}) Using layer {block} to process {hidden_states}")
+            # print(f"{idx+1}/{len(self.stem)}) Using layer {block} to process {hidden_states}")
             hidden_states = block(data)
             
         residual = None
         for idx, block in enumerate(self.blocks):
-            print(f"{idx+1}/{len(self.blocks)}) Using block {block} to process {hidden_states}")
+            # print(f"{idx+1}/{len(self.blocks)}) Using block {block} to process {hidden_states}")
             hidden_states, residual = block(
                 hidden_states, residual, inference_params=inference_params, **mixer_kwargs
             )
         if not self.fused_add_norm:
-            print("No fused_add_norm...")
             hidden_states = self.dropout(hidden_states)
             residual = (hidden_states + residual) if residual is not None else hidden_states
             hidden_states = self.norm_f(tf.cast(residual, self.norm_f.weight.dtype))
         else:
-            print("Yes fused_add_norm...")
             # EMRAN using LayerNormalization (for now)
             # Set prenorm=False here since we don't need the residual
             # hidden_states = layer_norm(

@@ -180,7 +180,6 @@ class DramaModel(tf.keras.Model):
                 has been started at the current timestep (meaning `observations` is the
                 reset observation from the environment).
         """
-        print("in forward_inference) obs, prev_state:", observations, previous_states)
         # Perform one step in the world model (starting from `previous_state` and
         # using the observations to yield a current (posterior) state).
         dist_feat, flattened_prior = self.world_model.forward_inference(
@@ -188,7 +187,6 @@ class DramaModel(tf.keras.Model):
             previous_states=previous_states,
             is_first=is_first,
         )
-        print("dist_feat, flattened_prior:", dist_feat, flattened_prior)
         # Compute action using our actor network and the current states.
         _, distr_params = self.actor(tf.concat([dist_feat, flattened_prior], axis=-1))
         # Use the mode of the distribution (Discrete=argmax, Normal=mean).
@@ -214,7 +212,6 @@ class DramaModel(tf.keras.Model):
                 has been started at the current timestep (meaning `observations` is the
                 reset observation from the environment).
         """
-        print("in forward_exploration) obs, prev_state:", observations, previous_states)
         # Perform one step in the world model (starting from `previous_state` and
         # using the observations to yield a current (posterior) state).
         dist_feat, flattened_prior = self.world_model.forward_inference(
@@ -223,7 +220,6 @@ class DramaModel(tf.keras.Model):
             is_first=is_first,
         )
         # Compute action using our actor network and the current states.
-        print("in forward_exploration) dist_feat, flattened_prior:", dist_feat, flattened_prior)
         actions, _ = self.actor(tf.concat([dist_feat, flattened_prior], axis=-1))
         return actions, {"dist_feat": dist_feat, "flattened_prior": flattened_prior, "a": actions} # EMRAN used to be {"h": states["h"], "z": states["z"], "a": actions}
 
@@ -351,7 +347,7 @@ class DramaModel(tf.keras.Model):
 
             ta_action = ta_action.write(t + 1, action_1t)
             ta_logits = ta_logits.write(t + 1, logits_1t)
-            
+
         # EMRAN can remove transpose if working correctly
         feat_buffer   = tf.transpose(tf.squeeze(ta_feat.stack(),  axis=2),      [0, 1, 2])   # [H + 1, B,  F]
         prior_buffer  = tf.transpose(tf.squeeze(ta_prior.stack(), axis=2),      [0, 1, 2])   # [H + 1, B,  Z]
@@ -438,14 +434,11 @@ class DramaModel(tf.keras.Model):
             # a_dreamed_t0_to_H.append(a)
             # a_dreamed_dist_params_t0_to_H.append(a_dist_params)
 
-        print("SEEING) feat_buffer:", feat_buffer)
         feat_buffer_HxB = tf.reshape(
             feat_buffer, shape=tf.concat([[-1], tf.shape(feat_buffer)[2:]], axis=0)
         )
-        print("SEEING) feat_buffer_BxH:", feat_buffer_HxB)
 
         reward_hat, reward_logits = self.world_model.reward_predictor(feat_buffer_HxB)
-        print("SEEING) reward_hat:", reward_hat)
         reward_hat_H_B = tf.reshape(reward_hat, [H + 1, -1])
 
         continue_hat, continue_logits = self.world_model.continue_predictor(feat_buffer_HxB)
