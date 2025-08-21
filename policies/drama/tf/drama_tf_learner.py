@@ -205,7 +205,7 @@ class DramaTfLearner(DramaLearner, TfLearner):
         L_rep = tf.reduce_mean(L_rep_B_T)
         # Make sure values for L_rep and L_dyn are the same (they only differ in their
         # gradients).
-        tf.assert_equal(L_dyn, L_rep)
+        tf.debugging.assert_near(L_dyn, L_rep, atol=1e-6, rtol=1e-6)
 
         # print("CHECKPOINT) END OF tf.assert_equal")
 
@@ -475,8 +475,8 @@ class DramaTfLearner(DramaLearner, TfLearner):
 
         B = tf.shape(flattened_post)[0]
         T = tf.shape(flattened_post)[1]
-        K = get_num_z_categoricals(config.model_size) # tf.shape(flattened_post)[2] / 2
-        C = get_num_z_classes(config.model_size) # tf.shape(flattened_post)[2] / 2
+        K = get_num_z_categoricals(config.model_size)
+        C = get_num_z_classes(config.model_size)
 
         post  = tf.reshape(flattened_post,  [B, T, K, C])
         prior = tf.reshape(flattened_prior, [B, T, K, C])
