@@ -20,8 +20,8 @@ def get_n_layer(model_size, override=None):
 
     assert model_size in _ALLOWED_MODEL_DIMS
     units = {
-        "XS": 1,
-        "D": 3,
+        "XS": 2,
+        "D": 2,
     }
     return units[model_size]
 

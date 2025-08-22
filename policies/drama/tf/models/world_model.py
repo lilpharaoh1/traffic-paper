@@ -427,7 +427,9 @@ class WorldModel(tf.keras.Model):
             "continues_BxT": continues,
             # Hidden states 
             "dist_feat": dist_feat,
+            "prior_logits": prior_logits,
             "flattened_prior": flattened_prior,
+            "post_logits": post_logits,
             "flattened_post": flattened_post,
 
             # EMRAN below is DreamerV3 stuff not used anymore

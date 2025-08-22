@@ -146,7 +146,9 @@ class DramaRLModule(RLModule, abc.ABC):
             "continue_distribution_BxT",
             "continues_BxT",
             "dist_feat",
+            "prior_logits",
             "flattened_prior",
+            "post_logits",
             "flattened_post",
 
             # EMRAN don't know if this will fix SpecError

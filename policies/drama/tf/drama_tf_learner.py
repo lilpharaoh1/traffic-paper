@@ -203,6 +203,7 @@ class DramaTfLearner(DramaLearner, TfLearner):
 
         L_dyn = tf.reduce_mean(L_dyn_B_T)
         L_rep = tf.reduce_mean(L_rep_B_T)
+
         # Make sure values for L_rep and L_dyn are the same (they only differ in their
         # gradients).
         tf.debugging.assert_near(L_dyn, L_rep, atol=1e-6, rtol=1e-6)
@@ -469,27 +470,27 @@ class DramaTfLearner(DramaLearner, TfLearner):
             network, predicting z posterior states from h-states and (encoded)
             observations.
         """
+        post_logits = fwd_out["post_logits"]
+        prior_logits = fwd_out["prior_logits"]
 
-        flattened_post = fwd_out["flattened_post"]
-        flattened_prior = fwd_out["flattened_prior"]
+        # Basic checks
+        tf.debugging.assert_all_finite(post_logits,  "post logits had NaN/Inf")
+        tf.debugging.assert_all_finite(prior_logits, "prior logits had NaN/Inf")
 
-        B = tf.shape(flattened_post)[0]
-        T = tf.shape(flattened_post)[1]
+        B = tf.shape(post_logits)[0]
+        T = tf.shape(post_logits)[1]
         K = get_num_z_categoricals(config.model_size)
         C = get_num_z_classes(config.model_size)
 
-        post  = tf.reshape(flattened_post,  [B, T, K, C])
-        prior = tf.reshape(flattened_prior, [B, T, K, C])
-
-        base_post  = tfp.distributions.OneHotCategorical(probs=post)   # batch [B,T,K], event [C]
-        base_prior = tfp.distributions.OneHotCategorical(probs=prior)
+        base_post  = tfp.distributions.OneHotCategorical(logits=post_logits)   # batch [B,T,K], event [C]
+        base_prior = tfp.distributions.OneHotCategorical(logits=prior_logits)
 
         # reinterpret K (NOT T) as event → batch [B,T], event [K,C]
         post_dist  = tfp.distributions.Independent(base_post,  reinterpreted_batch_ndims=1)
         prior_dist = tfp.distributions.Independent(base_prior, reinterpreted_batch_ndims=1)
 
-        sg_post_dist  = tfp.distributions.Independent(tfp.distributions.OneHotCategorical(probs=tf.stop_gradient(post)),  1)
-        sg_prior_dist = tfp.distributions.Independent(tfp.distributions.OneHotCategorical(probs=tf.stop_gradient(prior)), 1)
+        sg_post_dist  = tfp.distributions.Independent(tfp.distributions.OneHotCategorical(logits=tf.stop_gradient(post_logits)),  1)
+        sg_prior_dist = tfp.distributions.Independent(tfp.distributions.OneHotCategorical(logits=tf.stop_gradient(prior_logits)), 1)
 
         L_dyn_BxT = tf.maximum(1.0, tfp.distributions.kl_divergence(sg_post_dist,  prior_dist))  # [B, T]
         L_rep_BxT = tf.maximum(1.0, tfp.distributions.kl_divergence(post_dist, sg_prior_dist))   # [B, T]
