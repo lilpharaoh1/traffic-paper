@@ -27,7 +27,7 @@ def parse_args(args):
 
     # ----required input parameters----
     parser.add_argument(
-        '--exp-config', type=str, default='cotv_config.ini',
+        '--exp-config', type=str, default='dev_config.ini',
         help='Name of the experiment configuration file, as located in exp_configs.')
 
     # ----optional input parameters----
@@ -79,8 +79,27 @@ def main(args):
     policy_config.config_to_ray.update({"enable_worker_sync": False})
     policy_config.algo_config.update_from_dict(policy_config.config_to_ray)
 
+    # 4. set training and evalation details
+    ## Training
+    train_iteration = config.getint('TRAIN_CONFIG', 'train_iteration', fallback=None)
+    train_timesteps = config.getint('TRAIN_CONFIG', 'train_timesteps', fallback=None)
+    assert sum(x is not None for x in [train_iteration, train_timesteps]) == 1, \
+        "Set only one of train_iteration or train_timesteps in config"    
+    stop_conditions = {"training_iteration": train_iteration}  \
+        if not train_iteration is None else \
+        {"timesteps_total": train_timesteps}
 
-    # 4. set GPU support
+    ## Evaluation
+    eval_dict = {
+        "evaluation_interval": config.getint('TRAIN_CONFIG', 'eval_interval'),   # run eval every eval_interval train iters
+        "evaluation_duration": config.getint('TRAIN_CONFIG', 'eval_duration'),   # run eval_duration episodes/timesteps per eval
+        "evaluation_duration_unit": "episodes"
+            if not train_iteration is None else "timesteps",
+        # "evaluation_parallel_to_training": True,                            # eval while training
+    }
+    policy_config.algo_config.update_from_dict(eval_dict)
+
+    # 5. set GPU support
     if args.use_gpu: 
         policy_config.algo_config.resources(num_gpus=1)                    # allocate one GPU to the trainer
         policy_config.algo_config.resources(num_learner_workers=1,
@@ -88,7 +107,12 @@ def main(args):
 
     tune.run(
         config.get('ALG_CONFIG', 'alg_name'),
+        stop=stop_conditions,
         config=policy_config.algo_config,
+        checkpoint_freq=config.getint('RAY_CONFIG', 'checkpoint_freq'),
+        checkpoint_at_end=config.getboolean('RAY_CONFIG', 'checkpoint_at_end'),
+        keep_checkpoints_num=config.getint('RAY_CONFIG', 'keep_checkpoints_num'),
+        max_failures=config.getint('RAY_CONFIG', 'max_failures'),
         local_dir="./ray_results/" + config.get('TRAIN_CONFIG', 'exp_name', fallback=env_name),
     )
 

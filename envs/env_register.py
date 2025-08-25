@@ -5,6 +5,7 @@ create and return an env instance
 import gymnasium as gym
 from gymnasium.envs import register
 from envs.env_cotv import CoTVEnv
+from envs.env_drama import DramaEnv
 
 def register_env_gym(env, scenario, sumo_config, control_config, train_config, version=0):
     """
@@ -54,7 +55,7 @@ def register_env_gym(env, scenario, sumo_config, control_config, train_config, v
         return gym.envs.make(env_name)
 
     def create_env(*_):
-        return CoTVEnv(scenario, sumo_config, control_config, train_config)
+        return DramaEnv(scenario, sumo_config, control_config, train_config)
 
     return create_env, env_name
 
