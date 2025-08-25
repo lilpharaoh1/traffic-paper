@@ -26,6 +26,8 @@ To run with `sumo-gui`, edit the `sumo-gui` field in the config file to True and
 ## TODO
 - [ ] Clean up README
 - [ ] Clean up comments
+- [X] Build evaluation script
+- [X] Validate model saving/loading
 - [ ] Check MBRL configs loaded correctly
 - [ ] Fix Drama reward reporting
 - [ ] Implement sumo vehicle load, etc.
