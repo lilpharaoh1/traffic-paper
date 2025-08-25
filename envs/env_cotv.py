@@ -147,13 +147,13 @@ class CoTVEnv(BasicEnv):
                                          num_vehicle_start_index + self.num_int_lane_max + self.num_out_lane_max])
             reward -= in_traffic_sum - out_traffic_sum # EMRAN not sure if this will work but sure look 
                                                        # EMRAN not divided by capacity but cotv code must do it somewhere, I guess?
-
+       
         return reward
 
     def _compute_dones(self): # EMRAN changed to just output bool
         # termination conditions for the environment
         done = {}
-        if self.step_count_in_episode >= self.sim_step * (self.horizon + self.warmup_steps):
+        if self.step_count_in_episode >= self.sim_step * (self.num_steps + self.warmup_steps):
             # done['__all__'] = True
             done = True
         else:

@@ -25,11 +25,11 @@ def dreamerv3_config(train_configs, env_name, model_configs):
         # EMRAN hardcoded for now
         "env": env_name,
         "log_level": train_configs.get('log_level'),
-        "batch_size_B": 4, # 16, 
-        "batch_length_T": 4, # 64, 
+        "batch_size_B": train_config.get('batch_size_B'), # 16, 
+        "batch_length_T": train_config.get('batch_length_T'), # 64,
         "gamma": 0.999,
         "model_size": "XS",
-        "training_ratio": 64, # 1024,
+        "training_ratio": train_config.get('training_ratio'), # 1024,
     }
 
 def ppo_config(train_configs, env_name, model_configs):
@@ -37,15 +37,15 @@ def ppo_config(train_configs, env_name, model_configs):
         "env": env_name,
         "log_level": train_configs.get('log_level'),
         "num_workers": train_configs.getint('num_workers'),
-        "train_batch_size": train_configs.getint('horizon') * train_configs.getint('num_workers')
+        "train_batch_size": train_configs.getint('num_steps') * train_configs.getint('num_workers')
         if not train_configs.getint('train_batch_size') else train_configs.getint('train_batch_size'),
         "gamma": 0.999,   # discount rate
         "use_gae": True,
         "lambda": 0.97,
         "kl_target": 0.02,
         "num_sgd_iter": 10,
-        "horizon": train_configs.getint('horizon'),
-        "timesteps_per_iteration": train_configs.getint('horizon') * train_configs.getint('num_workers'),
+        "num_steps": train_configs.getint('num_steps'),
+        "timesteps_per_iteration": train_configs.getint('num_steps') * train_configs.getint('num_workers'),
         "no_done_at_end": True,
     }
 

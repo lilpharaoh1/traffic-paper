@@ -57,7 +57,7 @@ class BasicEnv(gym.Env):
         self.num_output = sumo_config.getint('num_output', fallback=10)
         self.cast_obs = sumo_config.getboolean('cast_obs', fallback=True)
         self.warmup_steps = train_config.getint('warmup_steps', fallback=0)
-        self.horizon = train_config.getint('horizon')
+        self.num_steps = train_config.getint('num_steps')
 
     @property
     def action_space(self):
@@ -105,7 +105,7 @@ class BasicEnv(gym.Env):
         -------
         done: bool or a dict of each agent to determine whether the episode has ended
         """
-        return self.step_count_in_episode >= self.sim_step * (self.horizon + self.warmup_steps)
+        return self.step_count_in_episode >= self.sim_step * (self.num_steps + self.warmup_steps)
 
     def _get_info(self):
         """ (Optional)
@@ -329,7 +329,7 @@ class BasicMultiEnv(BasicEnv, MultiAgentEnv):
     def _compute_dones(self):
         # termination conditions for the environment
         done = {}
-        if self.step_count_in_episode >= self.sim_step * (self.horizon + self.warmup_steps):
+        if self.step_count_in_episode >= self.sim_step * (self.num_steps + self.warmup_steps):
             done['__all__'] = True
         else:
             done['__all__'] = False
