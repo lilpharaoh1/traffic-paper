@@ -28,9 +28,15 @@ def parse_args(args):
     # ----required input parameters----
     parser.add_argument(
         '--exp-config', type=str, default='dev_config.ini',
-        help='Name of the experiment configuration file, as located in exp_configs.')
+        help='Name of the experiment configuration file, as located in exp_configs.'
+    )
 
     # ----optional input parameters----
+    parser.add_argument(
+        '--restore-path', type=str, default=None,
+        help='Absolute path to checkpoint folder (checkpoint_XXX/) from ~/, located in ray_results.'
+    )
+
     parser.add_argument(
         "--use-gpu",
         action="store_true",
@@ -51,6 +57,7 @@ def main(args):
     logging.basicConfig(level=args.log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     logger = logging.getLogger(__name__)
     logger.info(f"DRL training with the following CLI args: {args}")
+    ray.init()
 
     # import experiment configuration
     config_file = args.exp_config
@@ -113,8 +120,11 @@ def main(args):
         checkpoint_at_end=config.getboolean('RAY_CONFIG', 'checkpoint_at_end'),
         keep_checkpoints_num=config.getint('RAY_CONFIG', 'keep_checkpoints_num'),
         max_failures=config.getint('RAY_CONFIG', 'max_failures'),
-        local_dir="./ray_results/" + config.get('TRAIN_CONFIG', 'exp_name', fallback=env_name),
+        restore=args.restore_path,
+        local_dir="~/ray_results/" + config.get('TRAIN_CONFIG', 'exp_name', fallback=env_name),
     )
+
+    ray.shutdown()
 
 if __name__ == '__main__':
     main(sys.argv[1:])
