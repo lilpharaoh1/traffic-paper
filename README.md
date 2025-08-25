@@ -22,3 +22,19 @@ python train.py --exp-config [ppo/dreamerv3/drama]_config.ini
 ```
 
 To run with `sumo-gui`, edit the `sumo-gui` field in the config file to True and run using the appropriate command above.
+
+## TODO
+- [ ] Clean up README
+- [ ] Clean up comments
+- [ ] Check MBRL configs loaded correctly
+- [ ] Fix Drama reward reporting
+- [ ] Implement sumo vehicle load, etc.
+- [ ] Test with Dublin layout
+- [ ] Build larger Dublin layouts 
+- [ ] Retrain PPO with new reward
+- [ ] Retrain DreamerV3 with new reward
+- [ ] Retrain Drama with new reward
+
+## Contact
+email: moustafe@tcd.ie / e.y.moustafa@ed.ac.uk
+linkedin: Emran Yasser Moustafa
