@@ -22,8 +22,9 @@ import logging
 def parse_args(args):
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        description="Parse argument used when running a DRL training for traffic control.",
-        epilog="python eval.py --exp-config EXP_CONFIG")
+        description="Parse arguments for evaluating an RLlib checkpoint on the SUMO env.",
+        epilog="python eval.py --exp-config EXP_CONFIG --restore-path /abs/path/to/CHECKPOINT"
+    )
 
     # ----required input parameters----
     parser.add_argument(
@@ -53,11 +54,17 @@ def parse_args(args):
 
 def main(args):
     args = parse_args(args)
-    
+
     logging.basicConfig(level=args.log_level,
                         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     logger = logging.getLogger(__name__)
     logger.info(f"DRL evaluation with the following CLI args: {args}")
+
+    if not args.restore_path:
+        raise ValueError("--restore-path is required for evaluation.")
+
+    if not os.path.isdir(args.restore_path):
+        raise FileNotFoundError(f"Checkpoint directory not found: {args.restore_path}")
 
     ray.init()
 
@@ -80,56 +87,67 @@ def main(args):
     this_env_register, env_name = register_env_gym(this_env, scenario, config['SUMO_CONFIG'], config['CONTROL_CONFIG'],
                                                    config['TRAIN_CONFIG'])
     register_env(env_name, this_env_register)
-    
+
     # 3. set DRL algorithm/model
     # policy_config = PolicyConfig("CartPole-v1", config['ALG_CONFIG'], config['TRAIN_CONFIG'], config['MODEL_CONFIG'])
     policy_config = PolicyConfig(env_name, config['ALG_CONFIG'], config['TRAIN_CONFIG'], config['MODEL_CONFIG'])
-    policy_config.config_to_ray.update({'disable_env_checking': True})  # to avoid checking non-override default obs_space...
+    policy_config.config_to_ray.update({'disable_env_checking': True})
     policy_config.config_to_ray.update({"enable_worker_sync": False})
     policy_config.algo_config.update_from_dict(policy_config.config_to_ray)
 
     # 4. set training and evalation details
-    ## training
-    train_iteration = config.getint('TRAIN_CONFIG', 'train_iteration', fallback=None)
-    train_timesteps = config.getint('TRAIN_CONFIG', 'train_timesteps', fallback=None)
-    assert sum(x is not None for x in [train_iteration, train_timesteps]) == 1, \
-        "Set only one of train_iteration or train_timesteps in config"    
-    stop_conditions = {"training_iteration": train_iteration}  \
-        if not train_iteration is None else \
-        {"timesteps_total": train_timesteps}
-
-    ## evaluation
-    eval_dict = {
-        "evaluation_interval": config.getint('TRAIN_CONFIG', 'eval_interval'),   # run eval every eval_interval train iters
-        "evaluation_duration": config.getint('TRAIN_CONFIG', 'eval_duration'),   # run eval_duration episodes/timesteps per eval
-        "evaluation_duration_unit": "episodes"
-            if not train_iteration is None else "timesteps",
-        # "evaluation_parallel_to_training": True,                             # eval while training
+    eval_duration = config.getint('TRAIN_CONFIG', 'eval_duration', fallback=10)
+    eval_overrides = {
+        "evaluation_duration": eval_duration,
+        "evaluation_duration_unit": "episodes",
         "evaluation_config": {
             "explore": False
         },
     }
-    policy_config.algo_config.update_from_dict(eval_dict)
+    policy_config.algo_config.update_from_dict(eval_overrides)
 
     # 5. set GPU support
-    if args.use_gpu: 
-        policy_config.algo_config.resources(num_gpus=1)                    # allocate one GPU to the trainer
-        policy_config.algo_config.resources(num_learner_workers=1,
-                                            num_gpus_per_learner_worker=1) # give each learner worker a GPU
+    if args.use_gpu:
+        policy_config.algo_config.resources(num_gpus=1)
+        policy_config.algo_config.resources(num_learner_workers=1, num_gpus_per_learner_worker=1)
 
-    tune.run(
-        config.get('ALG_CONFIG', 'alg_name'),
-        stop=stop_conditions,
-        config=policy_config.algo_config,
-        checkpoint_freq=config.getint('RAY_CONFIG', 'checkpoint_freq'),
-        checkpoint_at_end=config.getboolean('RAY_CONFIG', 'checkpoint_at_end'),
-        keep_checkpoints_num=config.getint('RAY_CONFIG', 'keep_checkpoints_num'),
-        max_failures=config.getint('RAY_CONFIG', 'max_failures'),
-        restore=args.restore_path,
-        local_dir="~/ray_results/" + config.get('TRAIN_CONFIG', 'exp_name', fallback=env_name),
-    )
+    # ---- Build, restore, evaluate ----
+    # Build the Algorithm from the AlgorithmConfig
+    algo = policy_config.algo_config.build()
 
+    # Restore from the provided checkpoint directory
+    logger.info(f"Restoring from checkpoint: {args.restore_path}")
+    algo.restore(args.restore_path)
+
+    # Run evaluation using the evaluation_* settings we applied above
+    logger.info("Running evaluation...")
+    eval_results = algo.evaluate()
+    # Pretty print key metrics to stdout
+    # (Available keys typically include "evaluation" dict with "episode_reward_mean", etc.)
+    print("\n=== Evaluation Results ===")
+    try:
+        # Newer RLlib returns nested dicts like {"evaluation": {"episode_reward_mean": ...}}
+        print(json.dumps(eval_results, indent=2))
+    except TypeError:
+        # Fallback printing if non-serializable
+        print(eval_results)
+
+    # Save results next to the checkpoint for convenience
+    out_path = os.path.join(args.restore_path, "eval_results.json")
+    try:
+        with open(out_path, "w") as f:
+            json.dump(eval_results, f, indent=2)
+        print(f"\nSaved evaluation results to: {out_path}")
+    except TypeError:
+        # If there are non-serializable objects, save a simplified version
+        simple = {k: v for k, v in eval_results.items() if isinstance(v, (int, float, str, dict, list))}
+        with open(out_path, "w") as f:
+            json.dump(simple, f, indent=2)
+        print(f"\nSaved simplified evaluation results to: {out_path}")
+
+    # Optional: shut down Ray
     ray.shutdown()
+
 
 if __name__ == '__main__':
     main(sys.argv[1:])
