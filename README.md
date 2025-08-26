@@ -60,8 +60,10 @@ Both the DreamerV3 and Drama models are largely set up in the same way, bar what
 - [X] Validate model saving/loading
 - [X] Check MBRL configs loaded correctly
 - [X] Fix Drama reward reporting
+- [ ] Implement DreamerV3 as custom algorithm
+- [ ] Implement MultiDiscrete for DreamerV3 + Drama
 - [ ] Align reward graphs on wandb (iterations)
-- [ ] Implement sumo vehicle load, etc.
+- [ ] Investigate sumo variables (vehicle load, etc.)
 - [ ] Test with Dublin layout
 - [ ] Build larger Dublin layouts 
 - [ ] Retrain PPO with new reward
