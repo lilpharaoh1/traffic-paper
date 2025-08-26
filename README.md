@@ -39,4 +39,5 @@ To run with the `sumo-gui' activated, edit the `sumo-gui` field in the config fi
 
 ## Contact
 email: moustafe@tcd.ie / e.y.moustafa@ed.ac.uk
+
 linkedin: Emran Yasser Moustafa
