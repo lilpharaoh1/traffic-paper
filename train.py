@@ -88,8 +88,7 @@ def main(args):
     policy_config.config_to_ray.update({"enable_worker_sync": False})
     policy_config.algo_config.update_from_dict(policy_config.config_to_ray)
 
-    # 4. set training and evalation details
-    ## training
+    # 4. set training details
     train_iteration = config.getint('TRAIN_CONFIG', 'train_iteration', fallback=None)
     train_timesteps = config.getint('TRAIN_CONFIG', 'train_timesteps', fallback=None)
     assert sum(x is not None for x in [train_iteration, train_timesteps]) == 1, \
@@ -97,19 +96,6 @@ def main(args):
     stop_conditions = {"training_iteration": train_iteration}  \
         if not train_iteration is None else \
         {"timesteps_total": train_timesteps}
-
-    ## evaluation
-    eval_dict = {
-        "evaluation_interval": config.getint('TRAIN_CONFIG', 'eval_interval'),   # run eval every eval_interval train iters
-        "evaluation_duration": config.getint('TRAIN_CONFIG', 'eval_duration'),   # run eval_duration episodes/timesteps per eval
-        "evaluation_duration_unit": "episodes"
-            if not train_iteration is None else "timesteps",
-        # "evaluation_parallel_to_training": True,                             # eval while training
-        "evaluation_config": {
-            "explore": False
-        },
-    }
-    policy_config.algo_config.update_from_dict(eval_dict)
 
     # 5. set GPU support
     if args.use_gpu: 
