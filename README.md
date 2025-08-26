@@ -21,7 +21,7 @@ python train.py --exp-config [ppo/dreamerv3/drama]_config.ini
 
 ```
 
-To run with `sumo-gui`, edit the `sumo-gui` field in the config file to True and run using the appropriate command above.
+To run with the `sumo-gui' activated, edit the `sumo-gui` field in the config file to True and run using the appropriate command above.
 
 ## TODO
 - [ ] Clean up README
@@ -29,7 +29,7 @@ To run with `sumo-gui`, edit the `sumo-gui` field in the config file to True and
 - [X] Build evaluation script
 - [X] Validate model saving/loading
 - [ ] Check MBRL configs loaded correctly
-- [ ] Fix Drama reward reporting
+- [X] Fix Drama reward reporting
 - [ ] Implement sumo vehicle load, etc.
 - [ ] Test with Dublin layout
 - [ ] Build larger Dublin layouts 
