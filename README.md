@@ -28,8 +28,9 @@ To run with the `sumo-gui' activated, edit the `sumo-gui` field in the config fi
 - [ ] Clean up comments
 - [X] Build evaluation script
 - [X] Validate model saving/loading
-- [ ] Check MBRL configs loaded correctly
+- [X] Check MBRL configs loaded correctly
 - [X] Fix Drama reward reporting
+- [ ] Align reward graphs on wandb (iterations)
 - [ ] Implement sumo vehicle load, etc.
 - [ ] Test with Dublin layout
 - [ ] Build larger Dublin layouts 
