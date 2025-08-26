@@ -339,8 +339,9 @@ class DramaEnvRunner(EnvRunner):
                     self._states[i] = s
                     # Reset h-states to the model's initial ones b/c we are starting a
                     # new episode.
+                    obs, _ = self.env.reset()
                     context_obs = deque(maxlen=16) # EMRAN hardcoded length for now 
-                    context_obs.append(self.env.reset())
+                    context_obs.append(obs)
                     context_action = deque(maxlen=16) # EMRAN hardcoded length for now
                     context_action.append(self.env.action_space.sample()) 
                     states = {
