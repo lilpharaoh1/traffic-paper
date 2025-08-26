@@ -21,7 +21,7 @@ python train.py --exp-config [ppo/dreamerv3/drama]_config.ini
 
 ```
 
-To run with the `sumo-gui' activated, edit the `sumo-gui` field in the config file to True and run using the appropriate command above.
+To run with the `sumo-gui` activated, edit the `sumo-gui` field in the config file to True and run using the appropriate command above.
 
 ## TODO
 - [ ] Clean up README
