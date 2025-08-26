@@ -42,14 +42,16 @@ python eval.py --exp-config [ppo/dreamerv3/drama]_config.ini --restore-path /pat
 
 ``` 
 
-Due to compatibility issues between DreamerV3 and the legacy method by which other agents are evaluated in Ray, the agents are instead evaluated using the RLModule `forward_inference` method (DreamerV3 and Drama) or by using `compute\_single\_action` method (PPO) and manually stepping the environment forward. The evaluation functions can be found in the file `eval_fns.py`.
+Due to compatibility issues between DreamerV3 and the legacy method by which other agents are evaluated in Ray, the agents are instead evaluated using the RLModule `forward_inference` method (DreamerV3 and Drama) or by using `compute_single_action` method (PPO) and manually stepping the environment forward. The evaluation functions can be found in the file `eval_fns.py`.
   
 ## Notes
 ### Iterations
 In Ray, an iteration (`iter`) refers to every time `algo.train()` is called. This may happen at different frequencies for different algorithms. For example, after an initial period to fill up it's replay buffer, both MBRL algorithms call `algo.train()` every timestep. This is in comparison to PPO which calls `algo.train()` every episode. It is for this reason that the length of training should likely be specified using `train_timesteps` rather then `train_iteration`. This is done in the configuration file.
 
-### Point Two
-Some words on a second point. 
+### MBRL Algorithms
+Both the DreamerV3 and Drama models are largely set up in the same way, bar what they use for world modeling (`tf/models/world_model.py::WorldModel::sequence_model`). For explaination purposes we will refer only to the Drama implementation when discussing how the agent is set up.
+
+...Write more once everything is cleaned up...  
 
 ## TODO
 - [ ] Clean up README
