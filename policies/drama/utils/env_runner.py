@@ -275,12 +275,6 @@ class DramaEnvRunner(EnvRunner):
             "context_action": tf.stack(list(context_action), axis=0)
         }
 
-        # print("\n\n\n\n\n\n\n\n\n")
-        # print("current_obs:", current_obs)
-        # print("context_obs, context_action:", context_obs, context_action)
-        # print("states:", states)
-        # print("self._episodes:", self._episodes)
-
         # Loop through env for n timesteps.
         ts = 0
         while ts < num_timesteps:
@@ -387,6 +381,7 @@ class DramaEnvRunner(EnvRunner):
 
         See docstring of `self.sample()` for more details.
         """
+        raise "Not implemented for Drama yet" # EMRAN come back to this later
         done_episodes_to_return = []
 
         obs, _ = self.env.reset()
