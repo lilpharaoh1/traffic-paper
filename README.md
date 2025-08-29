@@ -73,10 +73,13 @@ The training and evaluation is controlled primarily using config files, found in
 
 The agent weights are checkpointed at a frequency specified in the config file. If training is stopped/completed and you wish to continue training further, use the `--restore-path` shown above.  
 
-### MBRL Algorithms
-Both the DreamerV3 and Drama models are largely set up in the same way, bar what they use for world modeling (`tf/models/world_model.py::WorldModel::sequence_model`). For explaination purposes we will refer only to the Drama implementation when discussing how the agent is set up.
+### DreamerV3Traffic vs DreamerV3
+In this version of Ray (2.10.0), DreamerV3 uses a different training and evaluation procedure than the other agents (e.x. PPO). Therefore if one were to a standard Ray training and evaluation script it would crash for DreamerV3. Some mostly inconsequential methods and variables are not present in the DreamerV3 agent that are required to run these scripts. To quickly and easily fix this, I simply added these methods to a copy of the DreamerV3 agent and registered it as a custom algorithm. This agent is called DreamerV3Traffic. Currently (29/08/2025), no other changes are present between the two methods.
 
-An overview of the agents can be seen below. I will only document the key components of the agents.
+In future, if one wanted to make a multi-agent implementation of this work rather than a single-agent implementation, I would change this DreamerV3Traffic agent or make a copy. Will save you some time messing about with registering a custom algo.
+
+### MBRL Algorithms
+Both the DreamerV3 and Drama models are largely set up in the same way, bar what they use for world modeling (`tf/models/world_model.py::WorldModel::sequence_model`). An overview of the agents can be seen below. I will only document the key components of the agents.
 
 #### EnvRunner
 The EnvRunner module in the MBRL algorithms is a wrapper that handles interactions between the agent and the gymnasium environment.Of importance is the `sample_timesteps` method. This method is used to step the environment forward a number of timesteps using the agents actions. DreamerV3 and Drama have different implementations of this method due to their design (populating a context buffer for Drama vs handling recurrent state for DreamerV3). 
@@ -105,12 +108,6 @@ The decoders and encoder have been simplified to just use an MLP network. This i
 
 #### Sizes
 The sizes of all of components are controlled by a `model_size` parameter in the configuration file. Essentially, the sizes of each component are determined using simple mapping functions found in `drama/utils/__init__.py` and `drama/mamba_ssm/utils/models.py`. The `model_size` of `D` will return the default size of the Mamba agent as shown in the original [Drama repo](https://github.com/realwenlongwang/Drama/blob/master/config_files/configure.yaml). 
-
-### DreamerV3Traffic vs DreamerV3
-In this version of Ray (2.10.0), DreamerV3 uses a different training and evaluation procedure than the other agents (e.x. PPO). Therefore if one were to a standard Ray training and evaluation script it would crash for DreamerV3. Some mostly inconsequential methods and variables are not present in the DreamerV3 agent that are required to run these scripts. To quickly and easily fix this, I simply added these methods to a copy of the DreamerV3 agent and registered it as a custom algorithm. This agent is called DreamerV3Traffic. Currently (29/08/2025), no other changes are present between the two methods.
-
-In future, if one wanted to make a multi-agent implementation of this work rather than a single-agent implementation, I would change this DreamerV3Traffic agent or make a copy. Will save you some time messing about with registering a custom algo.
-
    
 
 ## TODO
