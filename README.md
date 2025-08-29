@@ -73,9 +73,6 @@ The training and evaluation is controlled primarily using config files, found in
 
 The agent weights are checkpointed at a frequency specified in the config file. If training is stopped/completed and you wish to continue training further, use the `--restore-path` shown above.  
 
-### Adapted CoTV Environment
-Desc of env
-
 ### MBRL Algorithms
 Both the DreamerV3 and Drama models are largely set up in the same way, bar what they use for world modeling (`tf/models/world_model.py::WorldModel::sequence_model`). For explaination purposes we will refer only to the Drama implementation when discussing how the agent is set up.
 
@@ -95,8 +92,9 @@ In future, if one wanted to make a multi-agent implementation of this work rathe
 - [X] Validate model saving/loading
 - [X] Check MBRL configs loaded correctly
 - [X] Fix Drama reward reporting
-- [ ] Implement DreamerV3 as custom algorithm
+- [X] Implement DreamerV3 as custom algorithm
 - [ ] Implement MultiDiscrete for DreamerV3 + Drama
+- [ ] Implement multiagent DreamerV3 + Drama
 - [ ] Align reward graphs on wandb (iterations)
 - [ ] Investigate sumo variables (vehicle load, etc.)
 - [ ] Test with Dublin layout
