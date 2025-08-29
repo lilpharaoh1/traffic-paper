@@ -4,7 +4,7 @@ import ast
 
 from ray.tune.registry import register_trainable
 from policies.drama.drama import Drama, DramaConfig
-from ray.rllib.algorithms.dreamerv3 import DreamerV3Config
+from policies.dreamerv3 import DreamerV3Traffic, DreamerV3TrafficConfig
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.algorithms.algorithm import Algorithm
 
@@ -72,7 +72,8 @@ class PolicyConfig:
             register_trainable("Drama", Drama)
             return DramaConfig()
         elif self.name == "DreamerV3":
-            return DreamerV3Config()
+            register_trainable("DreamerV3Traffic", DreamerV3Traffic)
+            return DreamerV3TrafficConfig()
         elif self.name == "PPO":
             return PPOConfig()
         else:
