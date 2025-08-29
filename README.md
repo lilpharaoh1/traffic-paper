@@ -76,7 +76,35 @@ The agent weights are checkpointed at a frequency specified in the config file. 
 ### MBRL Algorithms
 Both the DreamerV3 and Drama models are largely set up in the same way, bar what they use for world modeling (`tf/models/world_model.py::WorldModel::sequence_model`). For explaination purposes we will refer only to the Drama implementation when discussing how the agent is set up.
 
-...Write more once everything is cleaned up...  
+An overview of the agents can be seen below. I will only document the key components of the agents.
+
+#### EnvRunner
+The EnvRunner module in the MBRL algorithms is a wrapper that handles interactions between the agent and the gymnasium environment.Of importance is the `sample_timesteps` method. This method is used to step the environment forward a number of timesteps using the agents actions. DreamerV3 and Drama have different implementations of this method due to their design (populating a context buffer for Drama vs handling recurrent state for DreamerV3). 
+
+This method calls the `forward_inference` or `forward_exploration` methods from the respective agents which is used to determine the actions. 
+
+The state in the case of DreamerV3 is the `h` and `z` latent states from the previous timesteps. In the case of Drama, I have implented a buffer for both the previous observations and actions, which is passed to the agent as the state. The buffer is hardcoded as length 16, matching the original implementation, but this should be parameterised by the config in future.
+
+#### RLModule
+The RLModule is important but simple. This is the module that wraps world modeling components and the behaviour learning components of the agents. Each component is initialised in this module, if you are looking to change something. 
+
+#### Learners
+Both MBRL agents use a (TF)Learner module to handle the calculation of the loss and gradients for backpropagation. This `compute_loss_for_module` is the most relevant method in this module. This function calls subfunctions to caclulate the individual components of the overall loss. The graidnets are also calculated in this function with the method `compute_gradients`, however I did not touch this method at all from the DreamerV3 implementation.
+
+#### World Model
+The world model is the module that is the most changed from the DreamerV3 baseline. I have not deleted many methods used in DreamerV3 but not used in Drama, so do not be alarmed. The `forward_train` and `forward_inference` methods are the most important methods.
+
+Both methods use the same logic for infernece as seen in the original [Drama repo](https://github.com/realwenlongwang/Drama/blob/master/train.py#L94); compute posterior logits, feed to the Mamba-based sequence model to compute the feature vector, decode the feature vector into prior logits. In `forward_train` the feature and prior logits are decoded into a prediction of the reward and continue flag, as well as a reconstructed observation. In `forward_inference`, this is not necessary.
+
+#### MLP-based Predictors (posterior/prior/reward/continue/etc.) 
+The posterior and prior are predicted using the DistHead object in `drama/tf/models/world_model.py`. This object was closely copied from the original [Drama implementation](https://github.com/realwenlongwang/Drama/blob/master/sub_models/world_models.py#L135).
+
+The reward and continue predictor are implemented much in the same way, see `drama/tf/models/reward_predictor.py` and `drama/tf/models/continue_predictor.py` respectively. They call a MLP on the concatenation of the feature vector and flattened prior logits. In the case of the reward predictor, a reward layer is called which was not changed much from the DreamerV3 implementation. In the case of the continue predictor, the resulting logits are used to for a Bernouli distribution.
+
+The decoders and encoder have been simplified to just use an MLP network. This is functionally not much different from the DreamerV3 implementation as I believe they just did some reshaping before essentially feeding to an MLP layer.
+
+#### Sizes
+The sizes of all of components are controlled by a `model_size` parameter in the configuration file. Essentially, the sizes of each component are determined using simple mapping functions found in `drama/utils/__init__.py` and `drama/mamba_ssm/utils/models.py`. The `model_size` of `D` will return the default size of the Mamba agent as shown in the original [Drama repo](https://github.com/realwenlongwang/Drama/blob/master/config_files/configure.yaml). 
 
 ### DreamerV3Traffic vs DreamerV3
 In this version of Ray (2.10.0), DreamerV3 uses a different training and evaluation procedure than the other agents (e.x. PPO). Therefore if one were to a standard Ray training and evaluation script it would crash for DreamerV3. Some mostly inconsequential methods and variables are not present in the DreamerV3 agent that are required to run these scripts. To quickly and easily fix this, I simply added these methods to a copy of the DreamerV3 agent and registered it as a custom algorithm. This agent is called DreamerV3Traffic. Currently (29/08/2025), no other changes are present between the two methods.
@@ -93,6 +121,7 @@ In future, if one wanted to make a multi-agent implementation of this work rathe
 - [X] Check MBRL configs loaded correctly
 - [X] Fix Drama reward reporting
 - [X] Implement DreamerV3 as custom algorithm
+- [ ] Parameterise Drama context buffer with configs
 - [ ] Implement MultiDiscrete for DreamerV3 + Drama
 - [ ] Implement multiagent DreamerV3 + Drama
 - [ ] Align reward graphs on wandb (iterations)
